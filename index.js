@@ -7,18 +7,13 @@ const {
   MessageFlags
 } = require('discord.js');
 
-const client =
-  new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent
-    ]
-  });
-
-/* =========================================================
-   CONFIGURAÇÕES
-========================================================= */
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
 
 const CHANNELS = {
   painel: '⚙️・painel',
@@ -26,13 +21,10 @@ const CHANNELS = {
   vencimentos: '⏰・vencimentos',
   trocas: '🔄・trocas',
   renovacoes: '♻️・renovações',
-
   contasLivres: '📁・CONTAS LIVRES',
-
   unlockTool: '🆓・unlock-tool',
   tsmTool: '🆓・tsm-tool',
   amtTool: '🆓・amt-tool',
-
   comandos: '📖・comandos'
 };
 
@@ -41,8 +33,7 @@ const LEGACY_CHANNELS = [
   '🆓・contas-livres'
 ];
 
-const CATEGORY =
-  '📁 UNLOCK FÁCIL';
+const CATEGORY = '📁 UNLOCK FÁCIL';
 
 const PREFIX = {
   vendas: 'VEN',
@@ -51,8 +42,7 @@ const PREFIX = {
   renovacoes: 'REN'
 };
 
-const TZ =
-  'America/Sao_Paulo';
+const TZ = 'America/Sao_Paulo';
 
 const VALID_PLANS = {
   'Unlock Tool': [
@@ -60,12 +50,10 @@ const VALID_PLANS = {
     '3 meses',
     '12 meses'
   ],
-
   'TSM Tool': [
     '12 horas',
     '3 meses'
   ],
-
   'AMT Tool': [
     '12 horas',
     '3 meses',
@@ -73,20 +61,27 @@ const VALID_PLANS = {
   ]
 };
 
-const EXPIRATION_CHECK_INTERVAL =
-  30 * 1000;
+const PLAN_PRICES = {
+  'Unlock Tool': {
+    '12 horas': 10,
+    '3 meses': 55,
+    '12 meses': 110
+  },
+  'TSM Tool': {
+    '12 horas': 20,
+    '3 meses': 55
+  },
+  'AMT Tool': {
+    '12 horas': 20,
+    '3 meses': 55
+  }
+};
 
-const processingGuilds =
-  new Set();
+const EXPIRATION_CHECK_INTERVAL = 30 * 1000;
 
-/* =========================================================
-   CANAIS
-========================================================= */
+const processingGuilds = new Set();
 
-function getChannel(
-  guild,
-  key
-) {
+function getChannel(guild, key) {
   return guild.channels.cache.find(
     channel =>
       channel.name === CHANNELS[key] &&
@@ -94,41 +89,23 @@ function getChannel(
   );
 }
 
-function getFreeAccountChannel(
-  guild,
-  tool
-) {
+function getFreeAccountChannel(guild, tool) {
   if (tool === 'Unlock Tool') {
-    return getChannel(
-      guild,
-      'unlockTool'
-    );
+    return getChannel(guild, 'unlockTool');
   }
 
   if (tool === 'TSM Tool') {
-    return getChannel(
-      guild,
-      'tsmTool'
-    );
+    return getChannel(guild, 'tsmTool');
   }
 
   if (tool === 'AMT Tool') {
-    return getChannel(
-      guild,
-      'amtTool'
-    );
+    return getChannel(guild, 'amtTool');
   }
 
   return null;
 }
 
-/* =========================================================
-   MENSAGENS
-========================================================= */
-
-async function fetchAllMessages(
-  channel
-) {
+async function fetchAllMessages(channel) {
   if (!channel) {
     return [];
   }
@@ -136,83 +113,53 @@ async function fetchAllMessages(
   const messages = [];
   let before;
 
-  for (
-    let page = 0;
-    page < 20;
-    page++
-  ) {
+  for (let page = 0; page < 20; page++) {
     const options = {
       limit: 100
     };
 
     if (before) {
-      options.before =
-        before;
+      options.before = before;
     }
 
-    const batch =
-      await channel.messages.fetch(
-        options
-      );
+    const batch = await channel.messages.fetch(options);
 
     if (!batch.size) {
       break;
     }
 
-    messages.push(
-      ...batch.values()
-    );
+    messages.push(...batch.values());
 
-    if (
-      batch.size < 100
-    ) {
+    if (batch.size < 100) {
       break;
     }
 
-    before =
-      batch.last().id;
+    before = batch.last().id;
   }
 
   return messages;
 }
 
-/* =========================================================
-   DATAS / HORÁRIOS
-========================================================= */
-
-function formatBR(
-  date
-) {
-  return new Intl.DateTimeFormat(
-    'pt-BR',
-    {
-      timeZone: TZ,
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    }
-  )
+function formatBR(date) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: TZ,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
     .format(date)
     .replace(',', '');
 }
 
-function dateTimeBR(
-  date
-) {
+function dateTimeBR(date) {
   return formatBR(date);
 }
 
-function parseDateOnlyBR(
-  value
-) {
-  if (
-    !/^\d{2}\/\d{2}\/\d{4}$/.test(
-      value
-    )
-  ) {
+function parseDateOnlyBR(value) {
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
     return null;
   }
 
@@ -220,62 +167,39 @@ function parseDateOnlyBR(
     day,
     month,
     year
-  ] =
-    value
-      .split('/')
-      .map(Number);
+  ] = value.split('/').map(Number);
 
-  const dt =
-    new Date(
-      `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T00:00:00-03:00`
-    );
+  const dt = new Date(
+    `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T00:00:00-03:00`
+  );
 
-  if (
-    Number.isNaN(
-      dt.getTime()
-    )
-  ) {
+  if (Number.isNaN(dt.getTime())) {
     return null;
   }
 
-  const checkDate =
-    new Intl.DateTimeFormat(
-      'pt-BR',
-      {
-        timeZone: TZ,
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric'
-      }
-    ).format(dt);
+  const checkDate = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: TZ,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  }).format(dt);
 
-  if (
-    checkDate !== value
-  ) {
+  if (checkDate !== value) {
     return null;
   }
 
   return dt;
 }
 
-function parseTimeBR(
-  value
-) {
-  if (
-    !/^\d{2}:\d{2}$/.test(
-      value
-    )
-  ) {
+function parseTimeBR(value) {
+  if (!/^\d{2}:\d{2}$/.test(value)) {
     return null;
   }
 
   const [
     hour,
     minute
-  ] =
-    value
-      .split(':')
-      .map(Number);
+  ] = value.split(':').map(Number);
 
   if (
     hour < 0 ||
@@ -292,21 +216,14 @@ function parseTimeBR(
   };
 }
 
-function parseDateTimeBR(
-  value
-) {
-  if (
-    !/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/.test(
-      value
-    )
-  ) {
+function parseDateTimeBR(value) {
+  if (!/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/.test(value)) {
     return null;
   }
 
-  const match =
-    value.match(
-      /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/
-    );
+  const match = value.match(
+    /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/
+  );
 
   if (!match) {
     return null;
@@ -321,110 +238,75 @@ function parseDateTimeBR(
     minute
   ] = match;
 
-  const dt =
-    new Date(
-      `${year}-${month}-${day}T${hour}:${minute}:00-03:00`
-    );
+  const dt = new Date(
+    `${year}-${month}-${day}T${hour}:${minute}:00-03:00`
+  );
 
-  if (
-    Number.isNaN(
-      dt.getTime()
-    )
-  ) {
+  if (Number.isNaN(dt.getTime())) {
     return null;
   }
 
-  const check =
-    new Intl.DateTimeFormat(
-      'pt-BR',
-      {
-        timeZone: TZ,
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      }
-    )
-      .format(dt)
-      .replace(',', '');
+  const check = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: TZ,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+    .format(dt)
+    .replace(',', '');
 
-  if (
-    check !== value
-  ) {
+  if (check !== value) {
     return null;
   }
 
   return dt;
 }
 
-function buildRegisteredAt(
-  data,
-  hora
-) {
-  const now =
-    new Date();
+function buildRegisteredAt(data, hora) {
+  const now = new Date();
 
-  if (
-    !data &&
-    !hora
-  ) {
+  if (!data && !hora) {
     return now;
   }
 
-  const nowBR =
-    new Intl.DateTimeFormat(
-      'pt-BR',
-      {
-        timeZone: TZ,
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      }
-    )
-      .format(now)
-      .replace(',', '');
+  const nowBR = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: TZ,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+    .format(now)
+    .replace(',', '');
 
   const [
     currentDate,
     currentTime
-  ] =
-    nowBR.split(' ');
+  ] = nowBR.split(' ');
 
-  const finalDate =
-    data || currentDate;
+  const finalDate = data || currentDate;
+  const finalTime = hora || currentTime;
 
-  const finalTime =
-    hora || currentTime;
-
-  if (
-    !parseDateOnlyBR(
-      finalDate
-    )
-  ) {
+  if (!parseDateOnlyBR(finalDate)) {
     throw new Error(
       'Data inválida. Use o formato DD/MM/AAAA.'
     );
   }
 
-  if (
-    !parseTimeBR(
-      finalTime
-    )
-  ) {
+  if (!parseTimeBR(finalTime)) {
     throw new Error(
       'Hora inválida. Use o formato HH:MM.'
     );
   }
 
-  const result =
-    parseDateTimeBR(
-      `${finalDate} ${finalTime}`
-    );
+  const result = parseDateTimeBR(
+    `${finalDate} ${finalTime}`
+  );
 
   if (!result) {
     throw new Error(
@@ -435,71 +317,46 @@ function buildRegisteredAt(
   return result;
 }
 
-function addMonths(
-  date,
-  months
-) {
-  const shifted =
-    new Date(
-      date.getTime() +
-      3 * 60 * 60 * 1000
-    );
+function addMonths(date, months) {
+  const shifted = new Date(
+    date.getTime() +
+    3 * 60 * 60 * 1000
+  );
 
-  const year =
-    shifted.getUTCFullYear();
+  const year = shifted.getUTCFullYear();
+  const month = shifted.getUTCMonth();
+  const day = shifted.getUTCDate();
+  const hour = shifted.getUTCHours();
+  const minute = shifted.getUTCMinutes();
+  const second = shifted.getUTCSeconds();
+  const ms = shifted.getUTCMilliseconds();
 
-  const month =
-    shifted.getUTCMonth();
+  const target = new Date(
+    Date.UTC(
+      year,
+      month + months + 1,
+      0,
+      hour,
+      minute,
+      second,
+      ms
+    )
+  );
 
-  const day =
-    shifted.getUTCDate();
+  const lastDay = target.getUTCDate();
+  const finalDay = Math.min(day, lastDay);
 
-  const hour =
-    shifted.getUTCHours();
-
-  const minute =
-    shifted.getUTCMinutes();
-
-  const second =
-    shifted.getUTCSeconds();
-
-  const ms =
-    shifted.getUTCMilliseconds();
-
-  const target =
-    new Date(
-      Date.UTC(
-        year,
-        month + months + 1,
-        0,
-        hour,
-        minute,
-        second,
-        ms
-      )
-    );
-
-  const lastDay =
-    target.getUTCDate();
-
-  const finalDay =
-    Math.min(
-      day,
-      lastDay
-    );
-
-  const resultPseudoUTC =
-    new Date(
-      Date.UTC(
-        year,
-        month + months,
-        finalDay,
-        hour,
-        minute,
-        second,
-        ms
-      )
-    );
+  const resultPseudoUTC = new Date(
+    Date.UTC(
+      year,
+      month + months,
+      finalDay,
+      hour,
+      minute,
+      second,
+      ms
+    )
+  );
 
   return new Date(
     resultPseudoUTC.getTime() -
@@ -507,58 +364,36 @@ function addMonths(
   );
 }
 
-/* =========================================================
-   PLANOS
-========================================================= */
-
-function validatePlan(
-  tool,
-  plan
-) {
-  if (
-    !VALID_PLANS[tool]
-  ) {
+function validatePlan(tool, plan) {
+  if (!VALID_PLANS[tool]) {
     throw new Error(
       `Ferramenta inválida: ${tool}.`
     );
   }
 
-  if (
-    !VALID_PLANS[tool].includes(
-      plan
-    )
-  ) {
+  if (!VALID_PLANS[tool].includes(plan)) {
     throw new Error(
       `O plano ${plan} não está disponível para ${tool}.`
     );
   }
 }
 
-function calculateExpiration(
-  plan,
-  registeredAt
-) {
-  if (
-    plan === '12 horas'
-  ) {
+function calculateExpiration(plan, registeredAt) {
+  if (plan === '12 horas') {
     return new Date(
       registeredAt.getTime() +
       12 * 60 * 60 * 1000
     );
   }
 
-  if (
-    plan === '3 meses'
-  ) {
+  if (plan === '3 meses') {
     return addMonths(
       registeredAt,
       3
     );
   }
 
-  if (
-    plan === '12 meses'
-  ) {
+  if (plan === '12 meses') {
     return addMonths(
       registeredAt,
       12
@@ -570,24 +405,13 @@ function calculateExpiration(
   );
 }
 
-/* =========================================================
-   IDs
-========================================================= */
-
-async function nextId(
-  channel,
-  prefix
-) {
+async function nextId(channel, prefix) {
   let max = 0;
 
   const messages =
-    await fetchAllMessages(
-      channel
-    );
+    await fetchAllMessages(channel);
 
-  for (
-    const message of messages
-  ) {
+  for (const message of messages) {
     const match =
       message.content.match(
         new RegExp(
@@ -596,11 +420,10 @@ async function nextId(
       );
 
     if (match) {
-      max =
-        Math.max(
-          max,
-          Number(match[1])
-        );
+      max = Math.max(
+        max,
+        Number(match[1])
+      );
     }
   }
 
@@ -609,14 +432,7 @@ async function nextId(
   ).padStart(3, '0')}`;
 }
 
-/* =========================================================
-   FORMATAÇÃO
-========================================================= */
-
-function block(
-  title,
-  fields
-) {
+function block(title, fields) {
   return [
     '━━━━━━━━━━━━━━━━━━━━━━',
     `📌 ${title}`,
@@ -675,10 +491,6 @@ async function createRecord(
   };
 }
 
-/* =========================================================
-   BUSCA DE REGISTROS
-========================================================= */
-
 async function findRecord(
   guild,
   type,
@@ -719,13 +531,7 @@ async function findRecord(
   ) || null;
 }
 
-/* =========================================================
-   LABELS
-========================================================= */
-
-function typeLabel(
-  type
-) {
+function typeLabel(type) {
   return {
     vendas: '💰 Vendas',
     vencimentos: '⏰ Vencimentos',
@@ -734,13 +540,7 @@ function typeLabel(
   }[type] || type;
 }
 
-/* =========================================================
-   CONFIGURAÇÃO
-========================================================= */
-
-async function setup(
-  guild
-) {
+async function setup(guild) {
   let category =
     guild.channels.cache.find(
       channel =>
@@ -875,13 +675,7 @@ async function setup(
   return category;
 }
 
-/* =========================================================
-   MANUAL
-========================================================= */
-
-async function setupCommandsChannel(
-  guild
-) {
+async function setupCommandsChannel(guild) {
   const channel =
     getChannel(
       guild,
@@ -904,9 +698,7 @@ async function setupCommandsChannel(
         client.user?.id
     );
 
-  if (
-    botMessages.length > 0
-  ) {
+  if (botMessages.length > 0) {
     return;
   }
 
@@ -974,7 +766,7 @@ async function setupCommandsChannel(
     'Lista registros recentes.',
     '',
     '📊 **/painel**',
-    'Mostra a quantidade de registros.',
+    'Mostra vendas, valores do dia e do mês, comparações e dados dos últimos 7 dias.',
     '',
     '━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
     '🆓 **CONTAS LIVRES**',
@@ -995,13 +787,7 @@ async function setupCommandsChannel(
   );
 }
 
-/* =========================================================
-   LEITURA DOS REGISTROS
-========================================================= */
-
-function extractExpiration(
-  content
-) {
+function extractExpiration(content) {
   const fullMatch =
     content.match(
       /⏰ VENCIMENTO: (\d{2}\/\d{2}\/\d{4} \d{2}:\d{2})/
@@ -1027,57 +813,419 @@ function extractExpiration(
   return null;
 }
 
-function extractClient(
-  content
-) {
+function extractClient(content) {
   return content.match(
     /👤 CLIENTE: (.+)/
   )?.[1]?.trim() || null;
 }
 
-function extractLogin(
-  content
-) {
+function extractLogin(content) {
   return content.match(
     /🔐 LOGIN: `?([^`\n]+)`?/
   )?.[1]?.trim() || null;
 }
 
-function extractPassword(
-  content
-) {
+function extractPassword(content) {
   return content.match(
     /🔑 SENHA: `?([^`\n]+)`?/
   )?.[1]?.trim() || null;
 }
 
-function extractTool(
-  content
-) {
+function extractTool(content) {
   return content.match(
     /🛠️ FERRAMENTA: (.+)/
   )?.[1]?.trim() || null;
 }
 
-function extractPlan(
-  content
-) {
+function extractPlan(content) {
   return content.match(
     /📦 PLANO: (.+)/
   )?.[1]?.trim() || null;
 }
 
-function extractSaleId(
-  content
+function extractRegisteredAt(
+  content,
+  fallbackDate = null
 ) {
+  const match =
+    content.match(
+      /📅 REGISTRADO EM: (\d{2}\/\d{2}\/\d{4} \d{2}:\d{2})/
+    );
+
+  if (match) {
+    return (
+      parseDateTimeBR(
+        match[1]
+      ) || fallbackDate
+    );
+  }
+
+  return fallbackDate;
+}
+
+function getPlanPrice(
+  tool,
+  plan
+) {
+  return PLAN_PRICES[tool]?.[plan] ?? null;
+}
+
+function moneyBR(value) {
+  return new Intl.NumberFormat(
+    'pt-BR',
+    {
+      style: 'currency',
+      currency: 'BRL'
+    }
+  ).format(value);
+}
+
+function dateKeyBR(date) {
+  return new Intl.DateTimeFormat(
+    'en-CA',
+    {
+      timeZone: TZ,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }
+  ).format(date);
+}
+
+function monthKeyBR(date) {
+  return new Intl.DateTimeFormat(
+    'en-CA',
+    {
+      timeZone: TZ,
+      year: 'numeric',
+      month: '2-digit'
+    }
+  ).format(date);
+}
+
+function dayLabelBR(date) {
+  return new Intl.DateTimeFormat(
+    'pt-BR',
+    {
+      timeZone: TZ,
+      weekday: 'short',
+      day: '2-digit',
+      month: '2-digit'
+    }
+  )
+    .format(date)
+    .replace('.', '');
+}
+
+function percentageChange(
+  current,
+  previous
+) {
+  if (previous === 0) {
+    return current === 0
+      ? '0%'
+      : 'novo';
+  }
+
+  const percent =
+    ((current - previous) /
+      previous) *
+    100;
+
+  const signal =
+    percent > 0
+      ? '+'
+      : '';
+
+  return `${signal}${percent.toFixed(1)}%`;
+}
+
+async function getSalesDashboard(
+  guild
+) {
+  const vendasChannel =
+    getChannel(
+      guild,
+      'vendas'
+    );
+
+  if (!vendasChannel) {
+    throw new Error(
+      'O canal de vendas não foi encontrado.'
+    );
+  }
+
+  const messages =
+    await fetchAllMessages(
+      vendasChannel
+    );
+
+  const now = new Date();
+
+  const todayKey =
+    dateKeyBR(now);
+
+  const yesterday =
+    new Date(
+      now.getTime() -
+      24 * 60 * 60 * 1000
+    );
+
+  const yesterdayKey =
+    dateKeyBR(
+      yesterday
+    );
+
+  const currentMonthKey =
+    monthKeyBR(now);
+
+  const [
+    currentYear,
+    currentMonth
+  ] = currentMonthKey
+    .split('-')
+    .map(Number);
+
+  const previousMonthDate =
+    new Date(
+      Date.UTC(
+        currentYear,
+        currentMonth - 2,
+        1
+      )
+    );
+
+  const previousMonthKey =
+    `${previousMonthDate.getUTCFullYear()}-${String(
+      previousMonthDate.getUTCMonth() + 1
+    ).padStart(2, '0')}`;
+
+  const stats = {
+    today: {
+      count: 0,
+      value: 0
+    },
+
+    yesterday: {
+      count: 0,
+      value: 0
+    },
+
+    month: {
+      count: 0,
+      value: 0
+    },
+
+    previousMonth: {
+      count: 0,
+      value: 0
+    },
+
+    daily: new Map(),
+    tools: new Map(),
+    plans: new Map(),
+    unknownPrices: []
+  };
+
+  for (
+    const message of messages
+  ) {
+    if (
+      !extractSaleId(
+        message.content
+      )
+    ) {
+      continue;
+    }
+
+    const registeredAt =
+      extractRegisteredAt(
+        message.content,
+        message.createdAt
+      );
+
+    if (!registeredAt) {
+      continue;
+    }
+
+    const tool =
+      extractTool(
+        message.content
+      ) || 'Não informado';
+
+    const plan =
+      extractPlan(
+        message.content
+      ) || 'Não informado';
+
+    const value =
+      getPlanPrice(
+        tool,
+        plan
+      );
+
+    const saleValue =
+      value ?? 0;
+
+    if (value === null) {
+      stats.unknownPrices.push({
+        tool,
+        plan
+      });
+    }
+
+    const dayKey =
+      dateKeyBR(
+        registeredAt
+      );
+
+    const monthKey =
+      monthKeyBR(
+        registeredAt
+      );
+
+    if (!stats.daily.has(dayKey)) {
+      stats.daily.set(
+        dayKey,
+        {
+          date: registeredAt,
+          count: 0,
+          value: 0
+        }
+      );
+    }
+
+    const daily =
+      stats.daily.get(
+        dayKey
+      );
+
+    daily.count++;
+    daily.value +=
+      saleValue;
+
+    if (!stats.tools.has(tool)) {
+      stats.tools.set(
+        tool,
+        {
+          count: 0,
+          value: 0
+        }
+      );
+    }
+
+    const toolStats =
+      stats.tools.get(
+        tool
+      );
+
+    toolStats.count++;
+    toolStats.value +=
+      saleValue;
+
+    if (!stats.plans.has(plan)) {
+      stats.plans.set(
+        plan,
+        {
+          count: 0,
+          value: 0
+        }
+      );
+    }
+
+    const planStats =
+      stats.plans.get(
+        plan
+      );
+
+    planStats.count++;
+    planStats.value +=
+      saleValue;
+
+    if (
+      dayKey ===
+      todayKey
+    ) {
+      stats.today.count++;
+      stats.today.value +=
+        saleValue;
+    }
+
+    if (
+      dayKey ===
+      yesterdayKey
+    ) {
+      stats.yesterday.count++;
+      stats.yesterday.value +=
+        saleValue;
+    }
+
+    if (
+      monthKey ===
+      currentMonthKey
+    ) {
+      stats.month.count++;
+      stats.month.value +=
+        saleValue;
+    }
+
+    if (
+      monthKey ===
+      previousMonthKey
+    ) {
+      stats.previousMonth.count++;
+      stats.previousMonth.value +=
+        saleValue;
+    }
+  }
+
+  const last7Days = [];
+
+  for (
+    let offset = 6;
+    offset >= 0;
+    offset--
+  ) {
+    const date =
+      new Date(
+        now.getTime() -
+        offset *
+          24 *
+          60 *
+          60 *
+          1000
+      );
+
+    const key =
+      dateKeyBR(date);
+
+    const item =
+      stats.daily.get(
+        key
+      );
+
+    last7Days.push({
+      date,
+      count:
+        item?.count || 0,
+      value:
+        item?.value || 0
+    });
+  }
+
+  return {
+    ...stats,
+    last7Days
+  };
+}
+
+function extractSaleId(content) {
   return content.match(
     /^🔖 ID: (VEN-\d+)$/m
   )?.[1] || null;
 }
 
-function extractSaleLink(
-  content
-) {
+function extractSaleLink(content) {
   return content.match(
     /🔗 VENDA: (https?:\/\/\S+)/
   )?.[1]?.trim() || null;
@@ -1091,9 +1239,6 @@ function extractLinkedSaleId(
   )?.[1] || null;
 }
 
-/*
- * Verifica se a conta já teve a senha trocada.
- */
 function hasPasswordChanged(
   content
 ) {
@@ -1101,10 +1246,6 @@ function hasPasswordChanged(
     '🔄 STATUS: SENHA TROCADA'
   );
 }
-
-/* =========================================================
-   VERIFICAR VENCIMENTO
-========================================================= */
 
 async function findExpirationBySaleId(
   guild,
@@ -1158,36 +1299,34 @@ async function findExpirationBySaleId(
       vencimentosChannel
     );
 
-  return expirationMessages.find(
-    message => {
-      const linkedSaleId =
-        extractLinkedSaleId(
-          message.content
-        );
+  return (
+    expirationMessages.find(
+      message => {
+        const linkedSaleId =
+          extractLinkedSaleId(
+            message.content
+          );
 
-      if (
-        linkedSaleId ===
-        saleId
-      ) {
-        return true;
+        if (
+          linkedSaleId ===
+          saleId
+        ) {
+          return true;
+        }
+
+        const storedSaleUrl =
+          extractSaleLink(
+            message.content
+          );
+
+        return (
+          storedSaleUrl ===
+          saleUrl
+        );
       }
-
-      const storedSaleUrl =
-        extractSaleLink(
-          message.content
-        );
-
-      return (
-        storedSaleUrl ===
-        saleUrl
-      );
-    }
-  ) || null;
+    ) || null
+  );
 }
-
-/* =========================================================
-   CRIAR VENCIMENTO
-========================================================= */
 
 async function createExpirationFromSale(
   guild,
@@ -1291,10 +1430,6 @@ async function createExpirationFromSale(
   );
 }
 
-/* =========================================================
-   PROCESSAR VENCIMENTOS AUTOMATICAMENTE
-========================================================= */
-
 async function processExpiredSales(
   guild
 ) {
@@ -1391,9 +1526,7 @@ async function processExpiredSales(
       }
     }
 
-    if (
-      created > 0
-    ) {
+    if (created > 0) {
       console.log(
         `⏰ ${created} vencimento(s) criado(s).`
       );
@@ -1404,10 +1537,6 @@ async function processExpiredSales(
     );
   }
 }
-
-/* =========================================================
-   BUSCAR VENDA ATIVA
-========================================================= */
 
 async function findCurrentSale(
   guild,
@@ -1511,10 +1640,6 @@ async function findCurrentSale(
   return matches[0];
 }
 
-/* =========================================================
-   LOCALIZAR VENDA PELO LOGIN
-========================================================= */
-
 async function findSaleByAccount(
   guild,
   cliente,
@@ -1611,10 +1736,6 @@ async function findSaleByAccount(
   return matches[0] || null;
 }
 
-/* =========================================================
-   ALTERAR SENHA
-========================================================= */
-
 function replacePassword(
   content,
   newPassword
@@ -1632,10 +1753,6 @@ function replacePassword(
     `🔑 SENHA: \`${newPassword}\``
   );
 }
-
-/* =========================================================
-   ADICIONAR STATUS
-========================================================= */
 
 function addPasswordChangedStatus(
   content
@@ -1656,10 +1773,6 @@ function addPasswordChangedStatus(
     `${statusLine}\n━━━━━━━━━━━━━━━━━━━━━━`
   );
 }
-
-/* =========================================================
-   TROCA DE SENHA — UMA CONTA
-========================================================= */
 
 async function changeSinglePassword(
   guild,
@@ -1733,7 +1846,8 @@ async function changeSinglePassword(
   let saleMessage =
     saleMessages.find(
       message =>
-        message.url === saleLink
+        message.url ===
+        saleLink
     );
 
   if (!saleMessage) {
@@ -1760,9 +1874,9 @@ async function changeSinglePassword(
             saleClient &&
             saleTool &&
             saleClient.toLowerCase() ===
-              wantedClient &&
+            wantedClient &&
             saleTool.toLowerCase() ===
-              wantedTool
+            wantedTool
           );
         }
       );
@@ -1803,10 +1917,6 @@ async function changeSinglePassword(
       )
   };
 }
-
-/* =========================================================
-   TROCA DE SENHAS — EM BLOCO
-========================================================= */
 
 async function changeExpiredPasswords(
   guild,
@@ -1864,7 +1974,7 @@ async function changeExpiredPasswords(
           return (
             match &&
             match[1] ===
-              wantedId
+            wantedId
           );
         }
       );
@@ -2126,10 +2236,6 @@ async function changeExpiredPasswords(
   };
 }
 
-/* =========================================================
-   CONTAS VENCIDAS
-========================================================= */
-
 async function getExpiredAccounts(
   guild
 ) {
@@ -2168,11 +2274,6 @@ async function getExpiredAccounts(
       continue;
     }
 
-    /*
-     * NOVO:
-     * Ignora contas que já tiveram
-     * a senha trocada.
-     */
     if (
       hasPasswordChanged(
         message.content
@@ -2190,9 +2291,6 @@ async function getExpiredAccounts(
       continue;
     }
 
-    /*
-     * Somente vendas vencidas.
-     */
     if (
       expiration.getTime() >
       Date.now()
@@ -2237,10 +2335,6 @@ async function getExpiredAccounts(
     });
   }
 
-  /*
-   * Mais antigas primeiro
-   * dentro de cada ferramenta.
-   */
   for (
     const tool of Object.keys(
       grouped
@@ -2255,10 +2349,6 @@ async function getExpiredAccounts(
 
   return grouped;
 }
-
-/* =========================================================
-   DIVIDIR TEXTO PARA O DISCORD
-========================================================= */
 
 function splitText(
   text,
@@ -2304,10 +2394,6 @@ function splitText(
   return parts;
 }
 
-/* =========================================================
-   ERROS
-========================================================= */
-
 async function replyError(
   interaction,
   error
@@ -2345,11 +2431,6 @@ async function replyError(
     );
   }
 }
-
-/* =========================================================
-   BOT ONLINE
-========================================================= */
-
 client.once(
   'clientReady',
   async connectedClient => {
@@ -2394,10 +2475,6 @@ client.once(
   }
 );
 
-/* =========================================================
-   APAGA MENSAGENS MANUAIS DO PAINEL
-========================================================= */
-
 client.on(
   'messageCreate',
   async message => {
@@ -2426,10 +2503,6 @@ client.on(
   }
 );
 
-/* =========================================================
-   INTERAÇÕES
-========================================================= */
-
 client.on(
   'interactionCreate',
   async interaction => {
@@ -2452,10 +2525,6 @@ client.on(
       const command =
         interaction.commandName;
 
-      /* ===================================================
-         /CONFIGURAR
-      =================================================== */
-
       if (
         command ===
         'configurar'
@@ -2469,10 +2538,6 @@ client.on(
         );
       }
 
-      /* ===================================================
-         RESTRINGE COMANDOS AO PAINEL
-      =================================================== */
-
       const painelChannel =
         getChannel(
           guild,
@@ -2482,16 +2547,12 @@ client.on(
       if (
         !painelChannel ||
         interaction.channelId !==
-        painelChannel.id
+          painelChannel.id
       ) {
         return interaction.editReply(
           '⚙️ Use os comandos no canal `⚙️・painel`.'
         );
       }
-
-      /* ===================================================
-         /VENDA
-      =================================================== */
 
       if (
         command ===
@@ -2601,10 +2662,6 @@ client.on(
         );
       }
 
-      /* ===================================================
-         /TROCA
-      =================================================== */
-
       if (
         command ===
         'troca'
@@ -2665,10 +2722,6 @@ client.on(
         );
       }
 
-      /* ===================================================
-         /TROCA-SENHA
-      =================================================== */
-
       if (
         command ===
         'troca-senha'
@@ -2713,10 +2766,6 @@ client.on(
           ].join('\n')
         );
       }
-
-      /* ===================================================
-         /TROCAR-SENHAS
-      =================================================== */
 
       if (
         command ===
@@ -2809,10 +2858,6 @@ client.on(
         );
       }
 
-      /* ===================================================
-         /VENCIDAS
-      =================================================== */
-
       if (
         command ===
         'vencidas'
@@ -2823,10 +2868,6 @@ client.on(
           );
 
         const sections = [];
-
-        /*
-         * UNLOCK TOOL
-         */
 
         if (
           grouped['Unlock Tool']?.length
@@ -2842,10 +2883,6 @@ client.on(
           );
         }
 
-        /*
-         * TSM TOOL
-         */
-
         if (
           grouped['TSM Tool']?.length
         ) {
@@ -2859,10 +2896,6 @@ client.on(
             ].join('\n')
           );
         }
-
-        /*
-         * AMT TOOL
-         */
 
         if (
           grouped['AMT Tool']?.length
@@ -2883,11 +2916,6 @@ client.on(
             '✅ Nenhuma venda vencida pendente de troca de senha.'
           );
         }
-
-        /*
-         * Uma conta por linha.
-         * Uma linha em branco somente entre ferramentas.
-         */
 
         const text =
           sections.join(
@@ -2920,10 +2948,6 @@ client.on(
 
         return;
       }
-
-      /* ===================================================
-         /RENOVAR
-      =================================================== */
 
       if (
         command ===
@@ -3036,10 +3060,6 @@ client.on(
         );
       }
 
-      /* ===================================================
-         /VER
-      =================================================== */
-
       if (
         command ===
         'ver'
@@ -3096,10 +3116,6 @@ client.on(
             : `❌ Nenhum registro encontrado em ${typeLabel(type)}.`
         );
       }
-
-      /* ===================================================
-         /BUSCAR
-      =================================================== */
 
       if (
         command ===
@@ -3206,10 +3222,6 @@ client.on(
         );
       }
 
-      /* ===================================================
-         /LISTAR
-      =================================================== */
-
       if (
         command ===
         'listar'
@@ -3284,10 +3296,6 @@ client.on(
           output
         );
       }
-
-      /* ===================================================
-         /VENCIMENTOS-PROXIMOS
-      =================================================== */
 
       if (
         command ===
@@ -3409,14 +3417,15 @@ client.on(
         );
       }
 
-      /* ===================================================
-         /PAINEL
-      =================================================== */
-
       if (
         command ===
         'painel'
       ) {
+        const dashboard =
+          await getSalesDashboard(
+            guild
+          );
+
         const counts = {};
 
         for (
@@ -3445,7 +3454,7 @@ client.on(
               : 0;
         }
 
-        const total =
+        const totalRecords =
           Object.values(
             counts
           ).reduce(
@@ -3457,20 +3466,159 @@ client.on(
             0
           );
 
-        return interaction.editReply(
-          [
-            '📊 **PAINEL UNLOCK FÁCIL**',
-            '',
-            `💰 Vendas: ${counts.vendas}`,
-            `⏰ Vencimentos: ${counts.vencimentos}`,
-            `🔄 Trocas: ${counts.trocas}`,
-            `♻️ Renovações: ${counts.renovacoes}`,
-            '',
-            `📦 Total de registros: ${total}`
-          ].join('\n')
-        );
-      }
+        const comparisonValue =
+          percentageChange(
+            dashboard.today.value,
+            dashboard.yesterday.value
+          );
 
+        const comparisonCount =
+          percentageChange(
+            dashboard.today.count,
+            dashboard.yesterday.count
+          );
+
+        const monthComparisonValue =
+          percentageChange(
+            dashboard.month.value,
+            dashboard.previousMonth.value
+          );
+
+        const monthComparisonCount =
+          percentageChange(
+            dashboard.month.count,
+            dashboard.previousMonth.count
+          );
+
+        const dailyLines =
+          dashboard.last7Days.map(
+            day =>
+              `• ${dayLabelBR(day.date)} — ${day.count} venda(s) — ${moneyBR(day.value)}`
+          );
+
+        const toolLines =
+          [...dashboard.tools.entries()]
+            .sort(
+              (a, b) =>
+                b[1].value -
+                a[1].value
+            )
+            .map(
+              ([tool, stats]) =>
+                `• ${tool}: ${stats.count} — ${moneyBR(stats.value)}`
+            );
+
+        const planLines =
+          [...dashboard.plans.entries()]
+            .sort(
+              (a, b) =>
+                b[1].value -
+                a[1].value
+            )
+            .map(
+              ([plan, stats]) =>
+                `• ${plan}: ${stats.count} — ${moneyBR(stats.value)}`
+            );
+
+        const output = [
+          '📊 **PAINEL UNLOCK FÁCIL**',
+          '',
+          '💰 **HOJE**',
+          `• Vendas: **${dashboard.today.count}**`,
+          `• Valor vendido: **${moneyBR(dashboard.today.value)}**`,
+          '',
+          '📅 **ONTEM**',
+          `• Vendas: **${dashboard.yesterday.count}**`,
+          `• Valor vendido: **${moneyBR(dashboard.yesterday.value)}**`,
+          '',
+          '📈 **COMPARAÇÃO HOJE × ONTEM**',
+          `• Quantidade: **${comparisonCount}**`,
+          `• Valor: **${comparisonValue}**`,
+          '',
+          '🗓️ **ESTE MÊS**',
+          `• Vendas: **${dashboard.month.count}**`,
+          `• Total vendido: **${moneyBR(dashboard.month.value)}**`,
+          '',
+          '📊 **MÊS ATUAL × MÊS ANTERIOR**',
+          `• Quantidade: **${monthComparisonCount}**`,
+          `• Valor: **${monthComparisonValue}**`,
+          '',
+          '📆 **ÚLTIMOS 7 DIAS**',
+          ...dailyLines,
+          '',
+          '🛠️ **POR FERRAMENTA**',
+          ...(
+            toolLines.length
+              ? toolLines
+              : [
+                  '• Nenhuma venda registrada.'
+                ]
+          ),
+          '',
+          '📦 **POR PLANO**',
+          ...(
+            planLines.length
+              ? planLines
+              : [
+                  '• Nenhuma venda registrada.'
+                ]
+          ),
+          '',
+          '📋 **REGISTROS**',
+          `• Vendas: ${counts.vendas}`,
+          `• Vencimentos: ${counts.vencimentos}`,
+          `• Trocas: ${counts.trocas}`,
+          `• Renovações: ${counts.renovacoes}`,
+          `• Total: ${totalRecords}`
+        ];
+
+        if (
+          dashboard.unknownPrices.length
+        ) {
+          output.push(
+            '',
+            '⚠️ **VALORES NÃO CADASTRADOS**',
+            ...dashboard.unknownPrices
+              .slice(0, 5)
+              .map(
+                item =>
+                  `• ${item.tool} — ${item.plan}`
+              ),
+            dashboard.unknownPrices.length > 5
+              ? `• +${dashboard.unknownPrices.length - 5} venda(s)`
+              : ''
+          );
+        }
+
+        const content =
+          output.join('\n');
+
+        const parts =
+          splitText(
+            content,
+            1900
+          );
+
+        await interaction.editReply({
+          content:
+            parts[0]
+        });
+
+        for (
+          let i = 1;
+          i < parts.length;
+          i++
+        ) {
+          await interaction.followUp({
+            content:
+              parts[i],
+            flags:
+              MessageFlags.Ephemeral
+          });
+        }
+
+        return;
+      }
     } catch (error) {
       await replyError(
         interaction,
@@ -3479,10 +3627,6 @@ client.on(
     }
   }
 );
-
-/* =========================================================
-   ERROS DO CLIENTE
-========================================================= */
 
 client.on(
   'error',
@@ -3510,10 +3654,6 @@ process.on(
       error
     )
 );
-
-/* =========================================================
-   LOGIN
-========================================================= */
 
 if (
   !process.env.DISCORD_TOKEN
