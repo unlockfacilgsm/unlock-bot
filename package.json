@@ -1,10 +1,19 @@
 {
   "name": "unlock-facil-discord-bot",
-  "version": "3.1.0",
+  "version": "4.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "deploy": "node deploy.js"
+    "deploy": "node deploy.js",
+    "doctor": "node scripts/doctor.js",
+    "refresh-records": "node scripts/refresh-records.js",
+    "audit-legacy": "node scripts/audit-legacy.js",
+    "check": "node scripts/check.js",
+    "test": "node --test --test-isolation=none",
+    "keygen": "node scripts/keygen.js"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   },
   "dependencies": {
     "discord.js": "^14.27.0",
