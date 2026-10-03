@@ -73,6 +73,46 @@ function saleData(overrides = {}) {
     registeredAt: '2090-01-01T15:00:00.000Z', actorId: 'seller-1', ...overrides };
 }
 
+test('sale corrections keep IDs and prices unless explicitly edited and cancel stale expirations', async () => {
+  const fixture = discordFixture(); const store = fixture.store(); await store.load();
+  const sale = await store.createSale(GUILD, saleData());
+  for (const item of await store.listOutbox(GUILD)) await store.completeOutbox(item.id);
+  const edited = await store.editSale(GUILD, { saleId: sale.id, changes: { client: 'Corrected', plan: '1 mês', login: 'corrected-login', password: '  corrected$&  ' }, actorId: 'admin' });
+  assert.equal(edited.id, sale.id); assert.equal(edited.priceCents, 1000);
+  assert.equal(edited.expiresAt, '2090-02-01T15:00:00.000Z');
+  assert.equal((await store.getDisplayRecord(GUILD, 'vendas', sale.id)).password, '  corrected$&  ');
+  assert.equal((await store.getAccount(GUILD, sale.accountId)).login, 'corrected-login');
+  const [expiration] = await store.expireSales(GUILD, '2090-02-02T15:00:00Z');
+  await store.editSale(GUILD, { saleId: sale.id, changes: { expiresAt: '2090-03-01T15:00:00Z' } });
+  assert.equal((await store.getRecord(GUILD, 'vencimentos', expiration.id)).status, 'cancelled');
+  assert.equal((await store.releaseAccounts(GUILD, { expirationIds: [expiration.id], newPassword: 'bad' })).changed.length, 0);
+  await assert.rejects(store.editSale(GUILD, { saleId: sale.id, changes: { plan: 'invalid' } }), /plano/i);
+  assert.equal((await store.getRecord(GUILD, 'vendas', sale.id)).plan, '1 mês');
+});
+
+test('replacement validates the old plan, reserves one new account and preserves encrypted trade history', async () => {
+  const fixture = discordFixture(); const store = fixture.store(); await store.load();
+  const sale = await store.createSale(GUILD, saleData());
+  for (const item of await store.listOutbox(GUILD)) await store.completeOutbox(item.id);
+  const data = { saleId: sale.id, previousPlan: '12 horas', newPlan: '1 mês', login: 'replacement-login', password: ' replacement-secret ', registeredAt: '2090-01-02T15:00:00Z', actorId: 'seller' };
+  await assert.rejects(store.replaceSaleAccount(GUILD, { ...data, previousPlan: '3 meses' }), /plano anterior/);
+  const trade = await store.replaceSaleAccount(GUILD, data);
+  const current = await store.getRecord(GUILD, 'vendas', sale.id);
+  assert.equal(current.id, sale.id); assert.equal(current.priceCents, 1000);
+  assert.equal(current.currentPlan, '1 mês'); assert.equal(current.login, data.login);
+  assert.equal(current.expiresAt, '2090-02-02T15:00:00.000Z');
+  assert.equal((await store.getAccount(GUILD, sale.accountId)).needsPasswordReset, true);
+  assert.equal((await store.getDisplayRecord(GUILD, 'trocas', trade.id)).password, data.password);
+  assert.equal(trade.password, undefined); assert.equal(trade.passwordEncrypted, undefined);
+  assert.ok(!JSON.stringify([...fixture.downloads.values()].map(value => value.toString())).includes(data.password));
+  const restored = discordFixture().store(); await restored.restoreSnapshot(await store.exportSnapshot());
+  assert.equal((await restored.getDisplayRecord(GUILD, 'trocas', trade.id)).password, data.password);
+  for (const item of await store.listOutbox(GUILD)) await store.completeOutbox(item.id);
+  await store.updateAccountPassword(GUILD, { accountId: sale.accountId, newPassword: 'reset-password' });
+  assert.equal((await store.getAccount(GUILD, sale.accountId)).status, 'available');
+  assert.equal((await store.getAccount(GUILD, current.accountId)).activeSaleId, sale.id);
+});
+
 test('sales reserve accounts atomically and concurrent counters remain unique', async () => {
   const fixture = discordFixture();
   const store = fixture.store(); await store.load();

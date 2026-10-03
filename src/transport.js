@@ -166,7 +166,9 @@ function renderRecord(record) {
   if (record.saleId) lines.push(`Venda: ${safe(record.saleId)}`);
   if (record.accountId) lines.push(`Conta: ${safe(record.accountId)}`);
   if (record.login) lines.push(`Login: ${safe(record.login)}`);
-  if (record.type === 'vendas') lines.push(`Senha: ${record.password !== undefined ? safe(record.password) : 'não disponível no histórico'}`);
+  if (record.type === 'vendas' || (record.type === 'trocas' && record.newPlan)) lines.push(`Senha: ${record.password !== undefined ? safe(record.password) : 'não disponível no histórico'}`);
+  if (record.previousPlan) lines.push(`Plano anterior: ${safe(record.previousPlan)}`);
+  if (record.newPlan) lines.push(`Plano novo: ${safe(record.newPlan)}`);
   if (record.plan) lines.push(`Plano original: ${safe(record.plan)}`);
   if (record.currentPlan && record.currentPlan !== record.plan) lines.push(`Plano atual: ${safe(record.currentPlan)}`);
   if (record.priceUnknown) lines.push('Valor cobrado: desconhecido no histórico migrado');
@@ -335,6 +337,8 @@ class DiscordTransport {
       '`/conta` cadastra uma conta no estoque; `/estoque` consulta contas por ferramenta e estado.',
       '`/vender` reserva uma conta livre, registra o valor cobrado e calcula o vencimento.',
       '`/renovar venda:VEN-...` registra uma nova receita e mantém os valores anteriores.',
+      '`/editar-venda venda:VEN-...` corrige os campos informados, mantendo o ID.',
+      '`/troca venda:VEN-... plano_anterior:... plano_novo:... login:... senha:...` substitui a conta da venda.',
       '`/vencidas` mostra as contas que aguardam troca externa; `/vencimentos-proximos` consulta próximas datas.',
       '`/troca-senha` e `/trocar-senhas` registram a senha nova SOMENTE após confirmar que a troca foi realizada na ferramenta externa.',
       'O bot não altera senhas nas ferramentas externas. A conta só volta ao estoque após a confirmação e a publicação das credenciais.',

@@ -49,6 +49,14 @@ class FakeStore {
     this.rows.renovacoes.push(renewal);
     return structuredClone(renewal);
   }
+  async editSale(guild, values) {
+    this.calls.push({ method: 'editSale', guild, values: structuredClone(values) });
+    return { ...this.rows.vendas.find(row => row.id === values.saleId), ...values.changes };
+  }
+  async replaceSaleAccount(guild, values) {
+    this.calls.push({ method: 'replaceSaleAccount', guild, values: structuredClone(values) });
+    return { ...values, id: 'TRC-001', previousAccountId: 'ACC-001' };
+  }
   async upsertAccount(guild, values) {
     this.calls.push({ method: 'upsertAccount', guild, values: structuredClone(values) });
     return { ...values, id: 'ACC-001' };
@@ -464,11 +472,33 @@ test('restauração recusa anexo fora do Discord antes de fazer requisição', a
   assert.match(content(command), /anexo do Discord/);
 });
 
-test('troca recusa ferramenta inválida antes de gravar o registro', async () => {
+test('editing forwards only chosen fields, preserves amounts and accepts future expiration corrections', async () => {
+  const { app, store } = harness();
+  store.rows.vendas.push({ id: 'VEN-001', tool: 'Unlock Tool', plan: '12 horas', priceCents: 800, discountCents: 200, registeredAt: NOW.toISOString(), expiresAt: '2026-10-03T03:00:00Z' });
+  const request = interaction('editar-venda', { venda: 'VEN-001', cliente: 'Corrected', desconto: 1, vencimento: '05/10/2026', hora_vencimento: '15:00' });
+  await app.handle(request);
+  assert.equal(store.calls[0].method, 'editSale');
+  assert.deepEqual(store.calls[0].values.changes, { client: 'Corrected', priceCents: 900, discountCents: 100, expiresAt: '2026-10-05T18:00:00.000Z' });
+  assert.match(content(request), /atualizada/);
+});
+
+test('replacement requires exact new credentials and both plans, deriving the sale from its ID', async () => {
+  const { app, store } = harness();
+  const request = interaction('troca', { venda: 'VEN-001', plano_anterior: '12 horas', plano_novo: '1 mês', login: 'new-login', senha: '  new$&`  ' });
+  await app.handle(request);
+  const call = store.calls[0];
+  assert.equal(call.method, 'replaceSaleAccount');
+  assert.equal(call.values.previousPlan, '12 horas'); assert.equal(call.values.newPlan, '1 mês');
+  assert.equal(call.values.password, '  new$&`  ');
+  assert.match(content(request), /Plano anterior: 12 horas/);
+  assert.match(content(request), /Plano novo: 1 mês/);
+});
+
+test('troca recusa venda inválida antes de gravar o registro', async () => {
   const { app, store } = harness();
   const command = interaction('troca', { cliente: 'Cliente', ferramenta: 'Invalid', motivo: 'Erro' });
   await app.handle(command);
-  assert.match(content(command), /Ferramenta inválida/);
+  assert.match(content(command), /ID inválido/);
   assert.equal(store.calls.length, 0);
 });
 

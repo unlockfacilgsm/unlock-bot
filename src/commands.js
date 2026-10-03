@@ -4,7 +4,7 @@ const { toolChoices } = require('./catalog');
 const ADMIN_COMMANDS = new Set(['configurar', 'migrar', 'backup', 'restaurar', 'auditoria', 'alertas']);
 const MUTATING_COMMANDS = new Set([
   'configurar', 'migrar', 'restaurar', 'conta', 'vender', 'renovar',
-  'troca', 'troca-senha', 'trocar-senhas', 'alertas'
+  'editar-venda', 'troca', 'troca-senha', 'trocar-senhas', 'alertas'
 ]);
 
 const TYPES = [
@@ -31,10 +31,10 @@ function tool(builder, required = false) {
     .setDescription('Selecione a ferramenta').setRequired(required).addChoices(...toolChoices()));
 }
 
-function plan(builder) {
-  return builder.addStringOption(option => option.setName('plano')
+function plan(builder, name = 'plano', required = true) {
+  return builder.addStringOption(option => option.setName(name)
     .setDescription('Escolha o plano sugerido, com o preço da ferramenta')
-    .setRequired(true).setAutocomplete(true).setMinLength(1).setMaxLength(32));
+    .setRequired(required).setAutocomplete(true).setMinLength(1).setMaxLength(32));
 }
 
 function money(builder) {
@@ -114,12 +114,26 @@ function buildCommands() {
   plan(renew);
   money(renew);
 
-  const replacement = command('troca', 'Registra uma ocorrência de troca');
-  string(replacement, 'cliente', 'Nome ou contato do cliente', true);
-  tool(replacement, true);
-  string(replacement, 'motivo', 'Motivo da troca', true, 300);
+  const edit = command('editar-venda', 'Corrige uma venda existente, mantendo seu ID e registrando a edição');
+  string(edit, 'venda', 'ID VEN da venda', true, 64);
+  string(edit, 'cliente', 'Novo nome ou contato do cliente');
+  plan(edit, 'plano', false);
+  money(edit);
+  string(edit, 'data', 'Corrigir data do registro DD/MM/AAAA', false, 10, 10);
+  string(edit, 'hora', 'Corrigir hora do registro HH:MM', false, 5, 5);
+  string(edit, 'vencimento', 'Corrigir data do vencimento DD/MM/AAAA', false, 10, 10);
+  string(edit, 'hora_vencimento', 'Corrigir hora do vencimento HH:MM', false, 5, 5);
+  string(edit, 'login', 'Corrigir login da conta vinculada');
+  string(edit, 'senha', 'Corrigir senha exata da conta vinculada', false, 200);
+
+  const replacement = command('troca', 'Substitui a conta da venda e registra os planos anterior e novo');
+  string(replacement, 'venda', 'ID VEN da venda cuja conta será substituída', true, 64);
+  plan(replacement, 'plano_anterior');
+  plan(replacement, 'plano_novo');
+  string(replacement, 'login', 'Login da conta que será colocada na venda', true);
+  string(replacement, 'senha', 'Senha exata da nova conta', true, 200);
+  string(replacement, 'motivo', 'Motivo da troca', false, 300);
   string(replacement, 'observacao', 'Observação adicional', false, 500);
-  string(replacement, 'venda', 'ID VEN relacionado à ocorrência', false, 64);
 
   const password = command('troca-senha', 'Registra uma troca externa de senha sem liberar a conta');
   string(password, 'vencimento', 'ID VENC do vencimento', true, 64);
@@ -170,7 +184,7 @@ function buildCommands() {
     configure,
     command('migrar', 'Importa o histórico legado escrito por este bot, preservando os canais'),
     command('backup', 'Envia uma cópia criptografada dos dados para o canal privado'),
-    restore, audit, account, stock, sale('vender'), renew,
+    restore, audit, account, stock, sale('vender'), renew, edit,
     replacement, password, passwords, expired, view, search, list, upcoming,
     command('painel', 'Mostra estoque, pendências e receitas registradas'), alerts, exporting
   ];

@@ -69,11 +69,17 @@ Renove com `/renovar venda:<VEN-...> plano:<plano>`. O plano é sugerido a parti
 
 ## Vencimentos e senhas
 
+Para corrigir uma venda, use `/editar-venda venda:VEN-...` e preencha apenas os campos que deseja alterar: cliente, plano, valor, desconto, data/hora do registro, vencimento/hora do vencimento, login ou senha. O ID é mantido, a mensagem é atualizada e a edição fica na auditoria. Alterar o plano não muda o valor cobrado automaticamente; alterar plano ou data do registro recalcula o vencimento, salvo quando informado diretamente. Vendas renovadas ou trocadas aceitam correção direta do vencimento, preservando o histórico dos períodos. Credenciais só podem ser corrigidas enquanto a conta continuar vinculada à venda.
+
+Para substituir a conta, use `/troca venda:VEN-... plano_anterior:<plano atual> plano_novo:<novo plano> login:<novo login> senha:<nova senha>`. Cliente e ferramenta vêm da venda. Motivo e observação são opcionais. O registro mostra os dois planos e somente as novas credenciais. A troca mantém o ID da venda e o valor cobrado; o prazo do novo plano começa no momento da troca, sem criar receita de renovação. A conta anterior fica aguardando troca de senha; depois de alterar sua senha externamente, use `/conta senha conta:<ACC antigo> nova_senha:<senha> confirmada:true` para devolvê-la ao estoque. As credenciais anteriores permanecem criptografadas no histórico da troca.
+
+Após atualizar o código no Railway, execute `npm run deploy` com o `.env` do mesmo servidor para publicar `/editar-venda` e as novas opções de `/troca` no Discord.
+
 O bot acompanha os vencimentos e mantém as contas ocupadas até que a troca externa de senha seja confirmada. `/vencidas` entrega um arquivo `vencidas.txt` com uma conta por linha no formato `login:senha`, agrupadas pelo nome da ferramenta e com uma linha em branco entre os grupos; o filtro de ferramenta continua disponível. O arquivo contém a senha histórica da venda e é entregue somente ao operador autorizado. Consulte os próximos vencimentos com `/vencimentos-proximos dias:7`.
 
 **O bot não altera senhas nas ferramentas externas.** Primeiro faça a troca na ferramenta; depois registre a confirmação no Discord:
 
-- `/conta senha conta:<ACC-...> nova_senha:<senha> confirmada:true` atualiza a credencial, sem liberar a conta.
+- `/conta senha conta:<ACC-...> nova_senha:<senha> confirmada:true` atualiza a credencial. Contas vinculadas continuam ocupadas; uma conta substituída por `/troca` volta ao estoque após essa confirmação.
 - `/troca-senha vencimento:<VENC-...> nova_senha:<senha> confirmada:true` registra a troca para um vencimento, sem liberar a conta.
 - `/trocar-senhas vencimentos:<VENC-...,VENC-...> nova_senha:<senha> confirmada:true` registra a troca e libera as contas elegíveis para o estoque. Também aceita um único ID.
 
@@ -94,7 +100,8 @@ Senhas são preservadas exatamente, incluindo símbolos e espaços. Evite enviar
 | `/listar tipo:<tipo> quantidade:100` | Consulta até 100 registros recentes, com páginas |
 | `/estoque ferramenta:<ferramenta>` | Mostra contas disponíveis, ocupadas e aguardando troca |
 | `/painel` | Resume estoque, pendências, vendas e receitas de renovações |
-| `/troca cliente:<cliente> ferramenta:<ferramenta> motivo:<motivo>` | Registra uma ocorrência; `venda` e `observacao` são opcionais |
+| `/troca venda:<VEN-...> plano_anterior:<plano> plano_novo:<plano> login:<login> senha:<senha>` | Substitui a conta da venda; motivo e observação são opcionais |
+| `/editar-venda venda:<VEN-...>` | Corrige somente os campos opcionais informados |
 | `/auditoria quantidade:100` | Mostra ações e responsáveis; exclusivo de administradores |
 | `/exportar tipo:<tipo> inicio:<DD/MM/AAAA> fim:<DD/MM/AAAA>` | Envia CSV de registros sem senhas; todos os filtros são opcionais |
 

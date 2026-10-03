@@ -30,7 +30,7 @@ function clean(value) {
   if (value && typeof value === 'object') {
     const result = {};
     for (const [key, item] of Object.entries(value)) {
-      if (/^(?:password|senha|newPassword|new_password|passwordEncrypted|encryptionKey)$/i.test(key)) continue;
+      if (/^(?:password|senha|newPassword|new_password|passwordEncrypted|previousPasswordEncrypted|encryptionKey)$/i.test(key)) continue;
       if (item !== undefined) result[key] = clean(item);
     }
     return result;
@@ -431,6 +431,7 @@ class Store {
     const raw = state.records[type][id];
     if (!raw) return null;
     const record = this._publicRecord(raw);
+    if (type === 'trocas' && raw.passwordEncrypted) record.password = decryptString(raw.passwordEncrypted, this.key, `trade:${this.guildId}:${raw.id}`);
     const sale = type === 'vendas' ? raw : ['vencimentos', 'renovacoes'].includes(type) ? state.records.vendas[raw.saleId] : null;
     const relatedMatches = type === 'vendas' || (sale && raw.tool === sale.tool && (!raw.login || raw.login === sale.login));
     if (relatedMatches) {
@@ -647,6 +648,55 @@ class Store {
     });
   }
 
+  async editSale(guildId, { saleId, changes = {}, actorId, editedAt } = {}) {
+    this._guild(guildId);
+    return this._mutate(state => {
+      const sale = state.records.vendas[saleId];
+      if (!sale) throw new Error('Venda não encontrada.');
+      const allowed = ['client', 'plan', 'priceCents', 'discountCents', 'registeredAt', 'expiresAt', 'login', 'password'];
+      const fields = Object.keys(changes);
+      if (!fields.length || fields.some(field => !allowed.includes(field))) throw new Error('Informe ao menos um campo válido para editar.');
+      const account = state.accounts[sale.accountId];
+      const bound = account?.activeSaleId === sale.id && account.status === 'occupied';
+      const datesChanged = changes.plan !== undefined || changes.registeredAt !== undefined || changes.expiresAt !== undefined;
+      if ((datesChanged || changes.login !== undefined || changes.password !== undefined) && (!bound || sale.migrationConflict)) throw new Error('A conta desta venda foi liberada, transferida ou está em conflito.');
+      if ((changes.plan !== undefined || changes.registeredAt !== undefined) && [...Object.values(state.records.renovacoes), ...Object.values(state.records.trocas)].some(record => record.saleId === sale.id)) throw new Error('Venda renovada ou trocada: corrija o vencimento diretamente para preservar o histórico.');
+      if (changes.client !== undefined) sale.client = requiredText(changes.client, 'Cliente', 100);
+      if (changes.plan !== undefined) { getPlan(sale.tool, changes.plan); sale.plan = changes.plan; sale.currentPlan = changes.plan; }
+      if (changes.registeredAt !== undefined) sale.registeredAt = isoDate(changes.registeredAt);
+      if (changes.priceCents !== undefined) { sale.priceCents = cents(changes.priceCents, 'Preço'); sale.priceEstimated = false; sale.priceUnknown = false; }
+      if (changes.discountCents !== undefined) sale.discountCents = cents(changes.discountCents, 'Desconto');
+      if (changes.expiresAt !== undefined) sale.expiresAt = isoDate(changes.expiresAt);
+      else if (changes.plan !== undefined || changes.registeredAt !== undefined) sale.expiresAt = calculateExpiration(sale.currentPlan || sale.plan, new Date(sale.registeredAt)).toISOString();
+      if (Date.parse(sale.expiresAt) < Date.parse(sale.registeredAt)) throw new Error('O vencimento não pode preceder o registro da venda.');
+      if (changes.login !== undefined || changes.password !== undefined) {
+        if (account.pendingDelivery || this._hasPending(state, account.id)) throw new Error('A conta possui entrega pendente; aguarde a publicação.');
+        if (changes.login !== undefined) {
+          requiredText(changes.login, 'Login', 100);
+          if (Object.values(state.accounts).some(other => other.id !== account.id && other.tool === sale.tool && other.login === changes.login)) throw new Error('Esse login já pertence a outra conta.');
+          account.login = changes.login; sale.login = changes.login;
+        }
+        if (changes.password !== undefined) {
+          validatePassword(changes.password);
+          account.passwordEncrypted = encryptString(changes.password, this.key, `account:${this.guildId}:${account.id}`);
+          sale.passwordEncrypted = encryptString(changes.password, this.key, `sale:${this.guildId}:${sale.id}`);
+        }
+        this._publishAccount(state, account);
+      }
+      if (datesChanged) sale.status = Date.parse(sale.expiresAt) <= Date.now() ? 'expired' : 'active';
+      for (const expiration of Object.values(state.records.vencimentos)) {
+        if (expiration.saleId !== sale.id || expiration.status !== 'pending') continue;
+        if (datesChanged) { expiration.status = 'cancelled'; expiration.cancelledAt = isoDate(editedAt); }
+        else { expiration.client = sale.client; expiration.login = sale.login; }
+        this._publish(state, 'vencimentos', expiration);
+      }
+      sale.editedAt = isoDate(editedAt); sale.editedBy = actorId || null;
+      this._publish(state, 'vendas', sale);
+      this._audit(state, 'sale.edited', sale.id, actorId, sale.editedAt, { fields });
+      return this._publicRecord(sale);
+    });
+  }
+
   async expireSales(guildId, nowISO = new Date().toISOString()) {
     this._guild(guildId);
     return this._mutate((state) => {
@@ -731,6 +781,9 @@ class Store {
       if (account.pendingDelivery || this._hasPending(state, account.id)) throw new Error('A conta possui entrega pendente; conclua a publicação antes de trocar sua senha.');
       account.passwordEncrypted = encryptString(newPassword, this.key, `account:${this.guildId}:${account.id}`);
       account.updatedAt = new Date().toISOString();
+      if (account.needsPasswordReset && !account.activeSaleId) {
+        account.needsPasswordReset = false; account.status = 'available';
+      }
       this._publishAccount(state, account);
       this._audit(state, 'account.password-confirmed', account.id, actorId, account.updatedAt);
       return this._publicAccount(account);
@@ -764,6 +817,52 @@ class Store {
       this._publish(state, 'trocas', record);
       this._audit(state, 'trade.created', record.id, data.actorId, record.registeredAt);
       return record;
+    });
+  }
+
+  async replaceSaleAccount(guildId, data) {
+    this._guild(guildId);
+    return this._mutate(state => {
+      const sale = state.records.vendas[data.saleId];
+      if (!sale) throw new Error('Venda não encontrada.');
+      const oldAccount = state.accounts[sale.accountId];
+      if (!oldAccount || oldAccount.activeSaleId !== sale.id || sale.status === 'released' || sale.migrationConflict) throw new Error('A venda não possui uma conta vinculada elegível para troca.');
+      if ((sale.currentPlan || sale.plan) !== data.previousPlan) throw new Error('O plano anterior não corresponde ao plano atual da venda.');
+      getPlan(sale.tool, data.newPlan);
+      requiredText(data.login, 'Login', 100); validatePassword(data.password);
+      if (oldAccount.pendingDelivery || this._hasPending(state, oldAccount.id)) throw new Error('A conta possui entrega pendente; aguarde a publicação.');
+      let account = this._findAccount(state, sale.tool, data.login);
+      if (account?.id === oldAccount.id) throw new Error('Informe outra conta para substituir a atual; para corrigir credenciais use /editar-venda.');
+      if (account && (account.status !== 'available' || account.activeSaleId || account.pendingDelivery || this._hasPending(state, account.id))) throw new Error('A nova conta está ocupada ou possui entrega pendente.');
+      if (account && this._password(account) !== data.password) throw new Error('A senha informada difere do estoque; atualize a conta antes da troca.');
+      if (!account) account = this._upsertAccount(state, { tool: sale.tool, login: data.login, password: data.password });
+      const registeredAt = isoDate(data.registeredAt);
+      const record = { id: this._next(state, 'TRC'), type: 'trocas', guildId: this.guildId, saleId: sale.id,
+        client: sale.client, tool: sale.tool, previousPlan: data.previousPlan, newPlan: data.newPlan,
+        previousAccountId: oldAccount.id, accountId: account.id, login: account.login,
+        reason: data.reason || '', observation: data.observation || '', registeredAt, actorId: data.actorId || null };
+      record.passwordEncrypted = encryptString(data.password, this.key, `trade:${this.guildId}:${record.id}`);
+      record.previousLogin = sale.login;
+      const previousPassword = this._salePassword(state, sale);
+      if (previousPassword !== undefined) record.previousPasswordEncrypted = encryptString(previousPassword, this.key, `trade-previous:${this.guildId}:${record.id}`);
+      oldAccount.activeSaleId = null; oldAccount.needsPasswordReset = true; oldAccount.status = 'occupied';
+      account.activeSaleId = sale.id; account.status = 'occupied'; account.updatedAt = registeredAt;
+      sale.accountId = account.id; sale.login = account.login; sale.currentPlan = data.newPlan;
+      sale.passwordEncrypted = encryptString(data.password, this.key, `sale:${this.guildId}:${sale.id}`);
+      // The replacement period starts at the recorded swap, without adding revenue.
+      sale.expiresAt = calculateExpiration(data.newPlan, new Date(registeredAt)).toISOString();
+      sale.status = Date.parse(sale.expiresAt) <= Date.now() ? 'expired' : 'active';
+      for (const expiration of Object.values(state.records.vencimentos)) {
+        if (expiration.saleId === sale.id && expiration.status === 'pending') {
+          expiration.status = 'cancelled'; expiration.cancelledAt = registeredAt;
+          this._publish(state, 'vencimentos', expiration);
+        }
+      }
+      state.records.trocas[record.id] = record;
+      this._publish(state, 'trocas', record); this._publish(state, 'vendas', sale);
+      this._publishAccount(state, oldAccount); this._publishAccount(state, account);
+      this._audit(state, 'sale.account-replaced', record.id, data.actorId, registeredAt, { saleId: sale.id, previousAccountId: oldAccount.id, accountId: account.id });
+      return this._publicRecord(record);
     });
   }
 
@@ -907,12 +1006,16 @@ class Store {
     for (const type of Object.keys(TYPES)) {
       if (!state.records[type] || Array.isArray(state.records[type])) throw new Error('Registros do snapshot incompatíveis.');
       for (const record of Object.values(state.records[type])) {
-        const { passwordEncrypted, ...withoutCredential } = record;
+        const { passwordEncrypted, previousPasswordEncrypted, ...withoutCredential } = record;
         if (record.type !== type || record.guildId !== this.guildId || !record.id || JSON.stringify(withoutCredential) !== JSON.stringify(clean(withoutCredential)) ||
-            (passwordEncrypted !== undefined && type !== 'vendas')) {
+            (passwordEncrypted !== undefined && !['vendas', 'trocas'].includes(type))) {
           throw new Error('Registro do snapshot inválido ou contém credenciais.');
         }
-        if (passwordEncrypted !== undefined) decryptString(passwordEncrypted, this.key, `sale:${this.guildId}:${record.id}`);
+        if (passwordEncrypted !== undefined) decryptString(passwordEncrypted, this.key, `${type === 'trocas' ? 'trade' : 'sale'}:${this.guildId}:${record.id}`);
+        if (previousPasswordEncrypted !== undefined) {
+          if (type !== 'trocas') throw new Error('Credencial anterior fora de uma troca.');
+          decryptString(previousPasswordEncrypted, this.key, `trade-previous:${this.guildId}:${record.id}`);
+        }
       }
     }
     for (const account of Object.values(state.accounts)) {

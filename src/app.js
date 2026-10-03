@@ -2,7 +2,7 @@
 
 const { PermissionFlagsBits, MessageFlags, escapeMarkdown } = require('discord.js');
 const catalog = require('./catalog');
-const { formatBR, buildRegisteredAt, parseDateOnlyBR } = require('./dates');
+const { formatBR, buildRegisteredAt, parseDateOnlyBR, parseDateTimeBR } = require('./dates');
 const validation = require('./validation');
 const { dashboardText, exportCsv } = require('./reporting');
 const { ADMIN_COMMANDS, MUTATING_COMMANDS } = require('./commands');
@@ -76,9 +76,9 @@ class BotApp {
 
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused(true);
-    if (focused.name !== 'plano') return interaction.respond([]);
+    if (!['plano', 'plano_anterior', 'plano_novo'].includes(focused.name)) return interaction.respond([]);
     let tool = option(interaction, 'String', 'ferramenta');
-    if (interaction.commandName === 'renovar') {
+    if (['renovar', 'editar-venda', 'troca'].includes(interaction.commandName)) {
       const saleId = option(interaction, 'String', 'venda');
       const sale = saleId ? await this.store.getRecord(this.guildId, 'vendas', saleId.trim().toUpperCase()) : null;
       tool = sale?.tool;
@@ -110,7 +110,7 @@ class BotApp {
 
   async accountText(account) {
     const sale = account.activeSaleId ? await this.store.getRecord(this.guildId, 'vendas', account.activeSaleId) : null;
-    const status = account.pendingDelivery ? 'Aguardando publicação' : account.status === 'available' ? 'Disponível' : sale?.status === 'expired' ? 'Aguardando troca de senha' : 'Em uso';
+    const status = account.pendingDelivery ? 'Aguardando publicação' : account.status === 'available' ? 'Disponível' : account.needsPasswordReset || sale?.status === 'expired' ? 'Aguardando troca de senha' : 'Em uso';
     return recordBlock(`${safe(account.id)} — ${safe(account.tool)}\nLogin: ${safe(account.login)}\nSituação: ${status}${sale ? `\nVenda: ${safe(sale.id)} — ${formatBR(sale.expiresAt)}` : ''}`);
   }
 
@@ -201,14 +201,14 @@ class BotApp {
       if (subcommand === 'senha') {
         validation.confirmed(option(interaction, 'Boolean', 'confirmada'));
         const account = await this.store.updateAccountPassword(guildId, { accountId: validation.id(str('conta'), 'ACC'), newPassword: validation.password(str('nova_senha')), actorId });
-        return this.publishChanges(interaction, `✅ Troca externa registrada para **${safe(account.id)}**. A situação da conta foi mantida.`);
+        return this.publishChanges(interaction, `✅ Troca externa registrada para **${safe(account.id)}**.${account.status === 'available' ? ' A conta substituída voltou ao estoque.' : ' A situação da conta foi mantida.'}`);
       }
       let accounts = await this.store.listAccounts(guildId, { tool: str('ferramenta') || undefined });
       const status = str('status');
       if (status) {
         const sales = await this.store.listRecords(guildId, 'vendas');
         const expired = new Set(sales.filter(sale => sale.status === 'expired').map(sale => sale.id));
-        accounts = accounts.filter(account => status === 'disponivel' ? account.status === 'available' && !account.pendingDelivery : status === 'aguardando-senha' ? expired.has(account.activeSaleId) : account.status === 'occupied' && !expired.has(account.activeSaleId));
+        accounts = accounts.filter(account => status === 'disponivel' ? account.status === 'available' && !account.pendingDelivery : status === 'aguardando-senha' ? account.needsPasswordReset || expired.has(account.activeSaleId) : account.status === 'occupied' && !account.needsPasswordReset && !expired.has(account.activeSaleId));
       }
       return showPages(interaction, accounts.length ? await Promise.all(accounts.map(account => this.accountText(account))) : 'Nenhuma conta encontrada.');
     }
@@ -234,14 +234,32 @@ class BotApp {
       return this.publishChanges(interaction, `✅ Renovação **${safe(renewal.id)}** registrada para ${safe(saleId)}.\nValor: **${catalog.money(renewal.priceCents)}**\nNovo vencimento: **${formatBR(renewal.expiresAt)}**`);
     }
 
+    if (command === 'editar-venda') {
+      const saleId = validation.id(str('venda'), 'VEN');
+      const sale = await this.store.getRecord(guildId, 'vendas', saleId);
+      if (!sale) throw new Error('Venda não encontrada.');
+      const changes = {};
+      if (str('cliente') !== null) changes.client = validation.text(str('cliente'), 'Cliente');
+      if (str('plano') !== null) changes.plan = str('plano');
+      if (str('login') !== null) changes.login = validation.text(str('login'), 'Login');
+      if (str('senha') !== null) changes.password = validation.password(str('senha'));
+      if (number('valor') !== null || number('desconto') !== null) Object.assign(changes, validation.amounts(sale.tool, changes.plan || sale.plan, number('valor') ?? ((sale.priceCents + (sale.discountCents || 0)) / 100), number('desconto') ?? ((sale.discountCents || 0) / 100)));
+      const correctedDate = (date, time, original) => {
+        const [oldDate, oldTime] = formatBR(original).split(' ');
+        const parsed = parseDateTimeBR(`${date || oldDate} ${time || oldTime}`);
+        if (!parsed) throw new Error('Data ou hora inválida. Use DD/MM/AAAA e HH:MM.');
+        return parsed.toISOString();
+      };
+      if (str('data') || str('hora')) changes.registeredAt = correctedDate(str('data'), str('hora'), sale.registeredAt);
+      if (str('vencimento') || str('hora_vencimento')) changes.expiresAt = correctedDate(str('vencimento'), str('hora_vencimento'), sale.expiresAt);
+      const edited = await this.store.editSale(guildId, { saleId, changes, actorId, editedAt: registeredAt });
+      return this.publishChanges(interaction, `✅ Venda **${safe(edited.id)}** atualizada.\nVencimento: **${formatBR(edited.expiresAt)}**`);
+    }
+
     if (command === 'troca') {
-      if (!Object.hasOwn(catalog.TOOLS, str('ferramenta'))) throw new Error('Ferramenta inválida.');
-      const saleId = str('venda') ? validation.id(str('venda'), 'VEN') : undefined;
-      const sale = saleId ? await this.store.getRecord(guildId, 'vendas', saleId) : null;
-      if (saleId && !sale) throw new Error('Venda não encontrada.');
-      if (sale && sale.tool !== str('ferramenta')) throw new Error('A ferramenta não corresponde à venda informada.');
-      const record = await this.store.createTrade(guildId, { client: validation.text(str('cliente'), 'Cliente'), tool: str('ferramenta'), reason: validation.text(str('motivo'), 'Motivo', 300), observation: str('observacao') ? validation.text(str('observacao'), 'Observação', 500) : '', saleId, registeredAt, actorId });
-      return this.publishChanges(interaction, `✅ Troca **${safe(record.id)}** registrada.`);
+      const saleId = validation.id(str('venda'), 'VEN');
+      const record = await this.store.replaceSaleAccount(guildId, { saleId, previousPlan: str('plano_anterior'), newPlan: str('plano_novo'), login: validation.text(str('login'), 'Login'), password: validation.password(str('senha')), reason: str('motivo') ? validation.text(str('motivo'), 'Motivo', 300) : '', observation: str('observacao') ? validation.text(str('observacao'), 'Observação', 500) : '', registeredAt, actorId });
+      return this.publishChanges(interaction, `✅ Troca **${safe(record.id)}** concluída na venda **${safe(saleId)}**.\nPlano anterior: ${safe(record.previousPlan)}\nPlano novo: ${safe(record.newPlan)}\nA conta antiga ${safe(record.previousAccountId)} aguarda troca de senha. Use /conta senha após alterá-la externamente.`);
     }
 
     if (['troca-senha', 'trocar-senhas'].includes(command)) {
@@ -270,7 +288,7 @@ class BotApp {
       const lines = ['📦 **ESTOQUE**'];
       for (const tool of tools) {
         const rows = accounts.filter(account => account.tool === tool);
-        lines.push(`\n**${safe(tool)}**`, `Disponíveis: ${rows.filter(a => a.status === 'available' && !a.pendingDelivery).length}`, `Em uso: ${rows.filter(a => a.status === 'occupied' && !expired.has(a.activeSaleId)).length}`, `Aguardando troca de senha: ${rows.filter(a => expired.has(a.activeSaleId)).length}`, `Aguardando publicação: ${rows.filter(a => a.pendingDelivery).length}`);
+        lines.push(`\n**${safe(tool)}**`, `Disponíveis: ${rows.filter(a => a.status === 'available' && !a.pendingDelivery).length}`, `Em uso: ${rows.filter(a => a.status === 'occupied' && !a.needsPasswordReset && !expired.has(a.activeSaleId)).length}`, `Aguardando troca de senha: ${rows.filter(a => a.needsPasswordReset || expired.has(a.activeSaleId)).length}`, `Aguardando publicação: ${rows.filter(a => a.pendingDelivery).length}`);
       }
       return showPages(interaction, lines.join('\n'));
     }

@@ -20,12 +20,22 @@ function option(command, name) {
   return result;
 }
 
+test('sale editing and replacement expose optional corrections and required plans and new credentials', () => {
+  const edit = named('editar-venda');
+  assert.equal(option(edit, 'venda').required, true);
+  assert.equal(option(edit, 'plano').required, false);
+  const trade = named('troca');
+  for (const name of ['venda', 'plano_anterior', 'plano_novo', 'login', 'senha']) assert.equal(option(trade, name).required, true);
+  assert.equal(option(trade, 'plano_novo').autocomplete, true);
+  assert.ok(!trade.options.some(item => ['cliente', 'ferramenta'].includes(item.name)));
+});
+
 test('o registro serializa sem nomes duplicados e contém todos os fluxos', () => {
   const commands = definitions();
   assert.equal(new Set(commands.map(command => command.name)).size, commands.length);
   assert.deepEqual(commands.map(command => command.name).sort(), [
     'alertas', 'auditoria', 'backup', 'buscar', 'configurar', 'conta', 'estoque',
-    'exportar', 'listar', 'migrar', 'painel', 'renovar', 'restaurar', 'troca', 'troca-senha',
+    'editar-venda', 'exportar', 'listar', 'migrar', 'painel', 'renovar', 'restaurar', 'troca', 'troca-senha',
     'trocar-senhas', 'vencidas', 'vencimentos-proximos', 'vender', 'ver'
   ].sort());
 
