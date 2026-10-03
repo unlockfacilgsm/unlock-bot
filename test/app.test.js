@@ -128,17 +128,21 @@ test('/vencidas delivers exact combolist credentials privately with the existing
   const { app, store } = harness();
   store.rows.vencimentos.push(
     { id: 'VENC-001', tool: 'AMT Tool', login: 'one@example.com', status: 'pending' },
-    { id: 'VENC-002', tool: 'AMT Tool', login: 'two', status: 'pending' },
     { id: 'VENC-003', tool: 'TSM Tool', login: 'other', status: 'pending' },
+    { id: 'VENC-002', tool: 'AMT Tool', login: 'two', status: 'pending' },
     { id: 'VENC-004', tool: 'AMT Tool', login: 'done', status: 'completed' }
   );
   store.displayPasswords.set('VENC-001', '  $&`*:senha  ');
   store.displayPasswords.set('VENC-002', 'á123');
+  store.displayPasswords.set('VENC-003', 'other-password');
   const request = interaction('vencidas', { ferramenta: 'AMT Tool' });
   await app.handle(request);
   assert.equal(request.deferPayload.flags, MessageFlags.Ephemeral);
   assert.equal(request.replies[0].files[0].name, 'vencidas.txt');
-  assert.equal(request.replies[0].files[0].attachment.toString('utf8'), 'one@example.com:  $&`*:senha  \ntwo:á123');
+  assert.equal(request.replies[0].files[0].attachment.toString('utf8'), 'AMT Tool:\none@example.com:  $&`*:senha  \ntwo:á123');
+  const all = interaction('vencidas');
+  await app.handle(all);
+  assert.equal(all.replies[0].files[0].attachment.toString('utf8'), 'AMT Tool:\none@example.com:  $&`*:senha  \ntwo:á123\n\nTSM Tool:\nother:other-password');
   const denied = interaction('vencidas', {}, { roles: [] });
   const reads = store.displayReads.length;
   await app.handle(denied);
