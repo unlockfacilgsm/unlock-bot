@@ -278,7 +278,14 @@ class BotApp {
     if (command === 'vencidas') {
       await this.store.expireSales(guildId, registeredAt);
       const expirations = (await this.store.listRecords(guildId, 'vencimentos')).filter(record => record.status === 'pending' && (!str('ferramenta') || record.tool === str('ferramenta')));
-      return showPages(interaction, expirations.length ? expirations.map(record => recordBlock(`${safe(record.id)} — ${safe(record.tool)}\nCliente: ${safe(record.client)}\nLogin: ${safe(record.login)}\nVencimento: ${formatBR(record.expiresAt)}`)) : '✅ Nenhum vencimento pendente de troca de senha.');
+      if (!expirations.length) return showPages(interaction, '✅ Nenhum vencimento pendente de troca de senha.');
+      const lines = [];
+      for (const record of expirations) {
+        const display = await this.store.getDisplayRecord(guildId, 'vencimentos', record.id);
+        if (!display?.login || display.password === undefined) throw new Error(`A credencial de ${record.id} não está disponível no histórico.`);
+        lines.push(`${display.login}:${display.password}`);
+      }
+      return interaction.editReply({ content: '', files: [{ name: 'vencidas.txt', attachment: Buffer.from(lines.join('\n'), 'utf8') }], allowedMentions: { parse: [] } });
     }
 
     if (command === 'ver') {

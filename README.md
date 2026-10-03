@@ -69,7 +69,7 @@ Renove com `/renovar venda:<VEN-...> plano:<plano>`. O plano é sugerido a parti
 
 ## Vencimentos e senhas
 
-O bot acompanha os vencimentos e mantém as contas ocupadas até que a troca externa de senha seja confirmada. Consulte pendências com `/vencidas` ou os próximos vencimentos com `/vencimentos-proximos dias:7`.
+O bot acompanha os vencimentos e mantém as contas ocupadas até que a troca externa de senha seja confirmada. `/vencidas` entrega um arquivo `vencidas.txt` com uma conta por linha no formato `login:senha`, sem cabeçalhos; o filtro de ferramenta continua disponível. O arquivo contém a senha histórica da venda e é entregue somente ao operador autorizado. Consulte os próximos vencimentos com `/vencimentos-proximos dias:7`.
 
 **O bot não altera senhas nas ferramentas externas.** Primeiro faça a troca na ferramenta; depois registre a confirmação no Discord:
 

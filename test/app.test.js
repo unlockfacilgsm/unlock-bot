@@ -24,7 +24,7 @@ class FakeStore {
   async getDisplayRecord(guild, type, id) {
     this.displayReads.push({ guild, type, id });
     const record = await this.getRecord(guild, type, id);
-    if (record && type === 'vendas' && this.displayPasswords.has(id)) record.password = this.displayPasswords.get(id);
+    if (record && this.displayPasswords.has(id)) record.password = this.displayPasswords.get(id);
     return record;
   }
   async listRecords(guild, type, { query } = {}) {
@@ -123,6 +123,33 @@ function content(value) { return value.replies.map(reply => reply.content || '')
 function manual(extra = {}) {
   return { cliente: 'Cliente', ferramenta: 'Unlock Tool', plano: '12 horas', login: 'account@example.com', senha: '  secret$&`  ', ...extra };
 }
+
+test('/vencidas delivers exact combolist credentials privately with the existing tool filter', async () => {
+  const { app, store } = harness();
+  store.rows.vencimentos.push(
+    { id: 'VENC-001', tool: 'AMT Tool', login: 'one@example.com', status: 'pending' },
+    { id: 'VENC-002', tool: 'AMT Tool', login: 'two', status: 'pending' },
+    { id: 'VENC-003', tool: 'TSM Tool', login: 'other', status: 'pending' },
+    { id: 'VENC-004', tool: 'AMT Tool', login: 'done', status: 'completed' }
+  );
+  store.displayPasswords.set('VENC-001', '  $&`*:senha  ');
+  store.displayPasswords.set('VENC-002', 'á123');
+  const request = interaction('vencidas', { ferramenta: 'AMT Tool' });
+  await app.handle(request);
+  assert.equal(request.deferPayload.flags, MessageFlags.Ephemeral);
+  assert.equal(request.replies[0].files[0].name, 'vencidas.txt');
+  assert.equal(request.replies[0].files[0].attachment.toString('utf8'), 'one@example.com:  $&`*:senha  \ntwo:á123');
+  const denied = interaction('vencidas', {}, { roles: [] });
+  const reads = store.displayReads.length;
+  await app.handle(denied);
+  assert.equal(store.displayReads.length, reads);
+  assert.ok(!denied.replies.some(reply => reply.files));
+  store.displayPasswords.delete('VENC-002');
+  const missing = interaction('vencidas', { ferramenta: 'AMT Tool' });
+  await app.handle(missing);
+  assert.match(content(missing), /VENC-002/);
+  assert.ok(!missing.replies.some(reply => reply.files));
+});
 
 test('authorized sales queries show passwords inside separators without exposing them to strangers or CSV', async () => {
   const { app, store } = harness();
