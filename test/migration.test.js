@@ -63,7 +63,7 @@ test('migration imports each record type, estimates historical prices and is ide
   const report = await f.run(); assert.deepEqual(report.errors, []);
   assert.equal(report.imported.vendas, 1); assert.equal(report.imported.renovacoes, 1); assert.equal(report.imported.vencimentos, 1); assert.equal(report.imported.trocas, 1);
   const saved = await f.store.getRecord('guild', 'vendas', 'VEN-001');
-  assert.equal(saved.priceCents, 1000); assert.equal(saved.priceEstimated, true); assert.equal(saved.password, undefined);
+  assert.equal(saved.priceCents, 2000); assert.equal(saved.priceEstimated, true); assert.equal(saved.password, undefined);
   assert.equal(saved.messageId, undefined); assert.equal(saved.legacyMessageId, '100');
   assert.equal((await f.store.getRecord('guild', 'renovacoes', 'REN-001')).saleId, saved.id);
   assert.equal(f.archive.length, 4);

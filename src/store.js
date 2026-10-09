@@ -214,8 +214,11 @@ class Store {
       typeName(type);
       for (const record of records) state.records[type][record.id] = record;
     }
+    for (const [type, ids] of Object.entries(changes.deletedRecords || {})) { typeName(type); for (const id of ids) delete state.records[type][id]; }
     for (const account of changes.accounts || []) state.accounts[account.id] = account;
+    for (const id of changes.deletedAccounts || []) delete state.accounts[id];
     for (const entry of changes.outbox || []) state.outbox[entry.id] = entry;
+    for (const id of changes.deletedOutbox || []) delete state.outbox[id];
     Object.assign(state.counters, changes.counters || {});
     Object.assign(state.config, changes.config || {});
     state.audit.push(...(changes.audit || []));
@@ -229,8 +232,11 @@ class Store {
       if (entries.length) records[type] = entries;
     }
     const mapDiff = (a, b) => Object.fromEntries(Object.entries(b).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(a[key])));
+    const deletedRecords = Object.fromEntries(Object.keys(TYPES).map(type => [type, Object.keys(before.records[type]).filter(id => !Object.hasOwn(after.records[type], id))]).filter(([, ids]) => ids.length));
     return {
-      records, accounts: changed(before.accounts, after.accounts), outbox: changed(before.outbox, after.outbox),
+      records, deletedRecords, accounts: changed(before.accounts, after.accounts),
+      deletedAccounts: Object.keys(before.accounts).filter(id => !Object.hasOwn(after.accounts, id)),
+      outbox: changed(before.outbox, after.outbox), deletedOutbox: Object.keys(before.outbox).filter(id => !Object.hasOwn(after.outbox, id)),
       counters: mapDiff(before.counters, after.counters), config: mapDiff(before.config, after.config),
       audit: after.audit.slice(before.audit.length),
     };
@@ -415,6 +421,91 @@ class Store {
       state.config[key] = clean(value);
       this._audit(state, 'config.updated', key, actorId);
       return state.config[key];
+    });
+  }
+
+  async listAdExpenses(guildId) {
+    this._guild(guildId); await this._ready();
+    return structuredClone(this._current().config.adExpenses || []).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async createAdExpense(guildId, { amountCents, date, description = '', actorId, registeredAt } = {}) {
+    this._guild(guildId);
+    if (!Number.isSafeInteger(amountCents) || amountCents < 1 || amountCents > 100000000) throw new Error('O valor do anúncio deve ser maior que zero e válido.');
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T12:00:00Z`)) || new Date(`${date}T12:00:00Z`).toISOString().slice(0, 10) !== date) throw new Error('Data inválida. Use DD/MM/AAAA.');
+    if (typeof description !== 'string' || description.length > 200 || /[\u0000-\u001f\u007f]/u.test(description)) throw new Error('Descrição inválida; use até 200 caracteres em uma linha.');
+    return this._mutate(state => {
+      const id = this._next(state, 'ADS');
+      const at = isoDate(registeredAt, this.clock());
+      const entry = { id, amountCents, date, description: description.trim(), createdAt: at, updatedAt: at, actorId: actorId || null };
+      const rows = Array.isArray(state.config.adExpenses) ? state.config.adExpenses : [];
+      state.config.adExpenses = [...rows, entry];
+      this._audit(state, 'ad-expense.created', id, actorId, at, { amountCents, date });
+      return entry;
+    });
+  }
+
+  async updateAdExpense(guildId, { id, amountCents, date, description, actorId, updatedAt } = {}) {
+    this._guild(guildId);
+    if (typeof id !== 'string' || !/^ADS-\d{3,}$/.test(id)) throw new Error('ID inválido. Use o ID do gasto, por exemplo ADS-001.');
+    if (amountCents !== undefined && (!Number.isSafeInteger(amountCents) || amountCents < 1 || amountCents > 100000000)) throw new Error('O valor do anúncio deve ser maior que zero e válido.');
+    if (date !== undefined && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T12:00:00Z`)) || new Date(`${date}T12:00:00Z`).toISOString().slice(0, 10) !== date)) throw new Error('Data inválida. Use DD/MM/AAAA.');
+    if (description !== undefined && (typeof description !== 'string' || description.length > 200 || /[\u0000-\u001f\u007f]/u.test(description))) throw new Error('Descrição inválida; use até 200 caracteres em uma linha.');
+    if (amountCents === undefined && date === undefined && description === undefined) throw new Error('Informe pelo menos um campo para alterar: valor, data ou descrição.');
+    return this._mutate(state => {
+      const rows = Array.isArray(state.config.adExpenses) ? state.config.adExpenses : [];
+      const index = rows.findIndex(entry => entry.id === id);
+      if (index < 0) throw new Error('Gasto não encontrado. Confira o ID ADS.');
+      const at = isoDate(updatedAt, this.clock());
+      const updated = { ...rows[index], ...(amountCents !== undefined ? { amountCents } : {}), ...(date !== undefined ? { date } : {}), ...(description !== undefined ? { description: description.trim() } : {}), updatedAt: at, updatedBy: actorId || null };
+      state.config.adExpenses = rows.map((entry, i) => i === index ? updated : entry);
+      this._audit(state, 'ad-expense.updated', id, actorId, at, { amountCents: updated.amountCents, date: updated.date });
+      return updated;
+    });
+  }
+
+  async deleteEntry(guildId, type, id, actorId) {
+    this._guild(guildId);
+    return this._mutate(state => {
+      const at = new Date().toISOString();
+      if (type === 'contas') {
+        const account = state.accounts[id];
+        if (!account) throw new Error('Conta não encontrada.');
+        if (account.status !== 'available' || account.activeSaleId || account.pendingDelivery || this._hasPending(state, id)) {
+          throw new Error('Só é possível excluir contas disponíveis, sem venda vinculada ou publicação pendente.');
+        }
+        delete state.accounts[id];
+        for (const entry of Object.values(state.outbox)) if (entry.payload?.accountId === id && entry.status !== 'delivered') entry.status = 'cancelled';
+        this._audit(state, 'account.deleted', id, actorId, at, { tool: account.tool });
+        return { id, type };
+      }
+      const allowed = ['vendas', 'vencimentos', 'renovacoes', 'trocas'];
+      if (!allowed.includes(type)) throw new Error('Tipo de registro inválido.');
+      const record = state.records[type]?.[id];
+      if (!record) throw new Error('Registro não encontrado. Confira o tipo e o ID.');
+      let relatedDeleted = 0;
+      if (type === 'vendas') {
+        for (const group of ['vencimentos', 'renovacoes', 'trocas']) {
+          for (const related of Object.values(state.records[group])) {
+            if (related.saleId !== id) continue;
+            delete state.records[group][related.id];
+            relatedDeleted++;
+            this._audit(state, 'record.deleted-cascade', related.id, actorId, at, { type: group, parentSaleId: id });
+            for (const entry of Object.values(state.outbox)) if (entry.payload?.id === related.id && entry.payload?.type === group && entry.status !== 'delivered') entry.status = 'cancelled';
+          }
+        }
+        const account = state.accounts[record.accountId];
+        if (account?.activeSaleId === id) {
+          account.activeSaleId = null;
+          account.status = 'available';
+          account.pendingDelivery = false;
+          this._publishAccount(state, account);
+        }
+      }
+      delete state.records[type][id];
+      for (const entry of Object.values(state.outbox)) if (entry.payload?.id === id && entry.payload?.type === type && entry.status !== 'delivered') entry.status = 'cancelled';
+      this._audit(state, 'record.deleted', id, actorId, at, { type, tool: record.tool || null, relatedDeleted });
+      return { id, type, relatedDeleted };
     });
   }
 

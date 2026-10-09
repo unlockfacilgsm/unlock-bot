@@ -129,6 +129,39 @@ class BotApp {
     const str = name => option(interaction, 'String', name);
     const number = name => option(interaction, 'Number', name);
 
+    if (command === 'anuncio') {
+      const subcommand = interaction.options.getSubcommand();
+      const rows = await this.store.listAdExpenses(guildId);
+      if (subcommand === 'listar') {
+        const lines = ['📣 **GASTOS COM ANÚNCIOS**'];
+        if (!rows.length) lines.push('Nenhum gasto registrado.');
+        for (const item of rows.slice(0, 40)) lines.push(`**${safe(item.id)}** — ${item.date.split('-').reverse().join('/')} — **${catalog.money(item.amountCents)}**${item.description ? ` — ${safe(item.description)}` : ''}`);
+        return showPages(interaction, lines.join('\n'));
+      }
+      if (subcommand === 'registrar') {
+        const rawDate = str('data');
+        const parsedDate = parseDateOnlyBR(rawDate);
+        if (!parsedDate) throw new Error('Data inválida. Use DD/MM/AAAA, inclusive para dias passados.');
+        const amount = number('valor');
+        if (!Number.isFinite(amount) || Math.abs(Math.round(amount * 100) / 100 - amount) > 1e-8) throw new Error('Informe o valor com no máximo duas casas decimais.');
+        const expense = await this.store.createAdExpense(guildId, { amountCents: Math.round(amount * 100), date: parsedDate.toISOString().slice(0, 10), description: str('descricao') || '', actorId, registeredAt });
+        await this.refreshReports(interaction.guild);
+        return this.publishChanges(interaction, `✅ Gasto **${safe(expense.id)}** registrado: **${catalog.money(expense.amountCents)}** em ${rawDate}.${expense.description ? `\nDescrição: ${safe(expense.description)}` : ''}`);
+      }
+      if (subcommand === 'editar') {
+        const id = validation.text(str('id'), 'ID do gasto', 32).trim().toUpperCase();
+        const rawDate = str('data');
+        const parsedDate = rawDate ? parseDateOnlyBR(rawDate) : null;
+        if (rawDate && !parsedDate) throw new Error('Data inválida. Use DD/MM/AAAA, inclusive para dias passados.');
+        const amount = number('valor');
+        if (amount !== null && (!Number.isFinite(amount) || Math.abs(Math.round(amount * 100) / 100 - amount) > 1e-8)) throw new Error('Informe o valor com no máximo duas casas decimais.');
+        const description = str('descricao');
+        const updated = await this.store.updateAdExpense(guildId, { id, ...(amount !== null ? { amountCents: Math.round(amount * 100) } : {}), ...(rawDate ? { date: parsedDate.toISOString().slice(0, 10) } : {}), ...(description !== null ? { description } : {}), actorId, updatedAt: registeredAt });
+        await this.refreshReports(interaction.guild);
+        return this.publishChanges(interaction, `✅ Gasto **${safe(updated.id)}** atualizado: **${catalog.money(updated.amountCents)}** em ${updated.date.split('-').reverse().join('/')}.${updated.description ? `\nDescrição: ${safe(updated.description)}` : ''}`);
+      }
+    }
+
     if (command === 'configurar') {
       const old = await this.store.getConfig(guildId, 'roles', {});
       const adminRole = option(interaction, 'Role', 'administrador');
@@ -329,7 +362,13 @@ class BotApp {
       return showPages(interaction, sales.length ? sales.map(sale => recordBlock(`${safe(sale.id)} — ${safe(sale.client)} — ${safe(sale.tool)}\n${formatBR(sale.expiresAt)}`)) : 'Nenhum vencimento no período informado.');
     }
 
-    if (command === 'painel') return showPages(interaction, dashboardText(await this.records('tudo'), await this.store.listAccounts(guildId), now));
+    if (command === 'excluir') {
+      if (option(interaction, 'Boolean', 'confirmar') !== true) throw new Error('Exclusão cancelada: confirme explicitamente para continuar.');
+      const type = str('tipo');
+      const id = validation.id(str('id'), type === 'contas' ? 'ACC' : ({ vendas: 'VEN', vencimentos: 'VENC', renovacoes: 'REN', trocas: 'TRC' })[type]);
+      const deleted = await this.store.deleteEntry(guildId, type, id, actorId);
+      return this.publishChanges(interaction, `🗑️ Registro **${safe(deleted.id)}** (${safe(deleted.type)}) excluído.${deleted.relatedDeleted ? ` Também foram excluídos ${deleted.relatedDeleted} registro(s) vinculados à venda.` : ''} A ação foi registrada na auditoria.`);
+    }
 
     if (command === 'auditoria') {
       const audit = await this.store.listAudit(guildId, { limit: option(interaction, 'Integer', 'quantidade') || 30 });
@@ -358,6 +397,25 @@ class BotApp {
     throw new Error('Comando desatualizado. Atualize os comandos com npm run deploy.');
   }
 
+  async refreshReports(guild) {
+    const channels = await this.store.getConfig(this.guildId, 'channels', {});
+    if (!channels.painel) return;
+    const panelRecords = await this.records('tudo');
+    const panelAccounts = await this.store.listAccounts(this.guildId);
+    const adExpenses = this.store.listAdExpenses ? await this.store.listAdExpenses(this.guildId) : [];
+    const catalogLines = ['📚 **CATÁLOGO ATUAL — ALUGUEL DE ACESSO**', ...Object.entries(catalog.TOOLS).map(([name, item]) => `${item.emoji} **${name}**: ${Object.entries(item.plans).map(([plan, data]) => `${plan} — ${catalog.money(data.priceCents)}`).join(' | ')}${item.hwids ? ` (${item.hwids} HWIDs)` : ''}`), '', 'Use `/vender` para registrar uma venda; `/conta adicionar` para cadastrar contas; `/buscar` e `/listar` para consultar registros; `/excluir` é restrito à administração.', 'Valores registrados são os informados no sistema; consulte compatibilidade da ferramenta antes de oferecer acesso.'];
+    await this.transport.publishPanel?.(guild, `${dashboardText(panelRecords, panelAccounts, this.clock(), adExpenses)}\n\n${catalogLines.join('\n')}`);
+    if (channels.anuncios) {
+      const lines = ['📣 **REGISTRO DE GASTOS COM ANÚNCIOS**', 'Dados fixos — atualizados automaticamente pelo bot.', ''];
+      const total = adExpenses.reduce((sum, item) => sum + item.amountCents, 0);
+      lines.push(`**Total registrado: ${catalog.money(total)}**`, '');
+      if (!adExpenses.length) lines.push('Nenhum gasto registrado. Use `/anuncio registrar`.');
+      else for (const item of adExpenses) lines.push(`**${safe(item.id)}** · ${item.date.split('-').reverse().join('/')} · **${catalog.money(item.amountCents)}**${item.description ? ` · ${safe(item.description)}` : ''}`);
+      lines.push('', 'Para corrigir um lançamento, use `/anuncio editar` e informe o ID ADS.');
+      await this.transport.publishAdExpenses?.(guild, lines.join('\n'));
+    }
+  }
+
   async tick(guild) {
     if (this.runningTick || this.stopping) return this.runningTick;
     this.runningTick = (async () => {
@@ -366,6 +424,7 @@ class BotApp {
       await this.store.expireSales(this.guildId, this.clock().toISOString());
       await this.transport.reminders(guild);
       await this.transport.flush(guild);
+      await this.refreshReports(guild);
       const lastBackup = await this.store.getConfig(this.guildId, 'lastBackupAt', null);
       if (!lastBackup || this.clock().getTime() - Date.parse(lastBackup) >= 86_400_000) {
         await this.transport.backup(guild);

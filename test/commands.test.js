@@ -34,8 +34,8 @@ test('o registro serializa sem nomes duplicados e contém todos os fluxos', () =
   const commands = definitions();
   assert.equal(new Set(commands.map(command => command.name)).size, commands.length);
   assert.deepEqual(commands.map(command => command.name).sort(), [
-    'alertas', 'auditoria', 'backup', 'buscar', 'configurar', 'conta', 'estoque',
-    'editar-venda', 'exportar', 'listar', 'migrar', 'painel', 'renovar', 'restaurar', 'troca', 'troca-senha',
+    'alertas', 'anuncio', 'auditoria', 'backup', 'buscar', 'configurar', 'conta', 'estoque',
+    'editar-venda', 'excluir', 'exportar', 'listar', 'migrar', 'renovar', 'restaurar', 'troca', 'troca-senha',
     'trocar-senhas', 'vencidas', 'vencimentos-proximos', 'vender', 'ver'
   ].sort());
 
@@ -54,6 +54,10 @@ test('o registro serializa sem nomes duplicados e contém todos os fluxos', () =
     }
   }
   for (const command of commands) checkOptions(command.options);
+  const ads = named('anuncio');
+  assert.equal(ads.default_member_permissions, String(PermissionFlagsBits.ManageGuild));
+  assert.deepEqual(ads.options.map(item => item.name), ['registrar', 'editar', 'listar']);
+  assert.equal(option({ name: 'anuncio registrar', options: option(ads, 'registrar').options }, 'data').required, true);
 });
 
 test('/vender é o único comando de venda e permite conta do estoque ou credencial manual', () => {

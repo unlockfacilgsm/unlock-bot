@@ -9,9 +9,9 @@ const {
 const CHANNEL_NAMES = {
   painel: '⚙️・painel', vendas: '💰・vendas', vencimentos: '⏰・vencimentos',
   trocas: '🔄・trocas', renovacoes: '♻️・renovações', comandos: '📖・comandos',
-  dados: '🤖・dados-bot', backups: '💾・backups', auditoria: '📋・auditoria', alertas: '🔔・alertas'
+  dados: '🤖・dados-bot', backups: '💾・backups', auditoria: '📋・auditoria', alertas: '🔔・alertas', anuncios: '📣・gastos-anuncios'
 };
-const ADMIN_CHANNELS = new Set(['dados', 'backups', 'auditoria']);
+const ADMIN_CHANNELS = new Set(['dados', 'backups', 'auditoria', 'anuncios']);
 const NO_MENTIONS = { parse: [] };
 const RECORD_SEPARATOR = '-----------------------------------------';
 function recordBlock(content) {
@@ -328,6 +328,46 @@ class DiscordTransport {
     return { channels, categories, roles };
   }
 
+  async publishPanel(guild, content) {
+    const channel = await this.getChannel(guild, 'painel');
+    if (!channel?.send) return;
+    const chunks = splitText(String(content), 1700);
+    const messages = await fetchAllMessages(channel);
+    const existing = messages.filter(message => message.author?.id === this.client.user.id && /UF4:PANEL:\d+/.test(message.content || ''));
+    for (let index = 0; index < chunks.length; index++) {
+      const body = `${chunks[index]}\nUF4:PANEL:${index}`;
+      const old = existing.find(message => message.content.includes(`UF4:PANEL:${index}`));
+      if (old) {
+        if (old.content !== body) await old.edit({ content: body, allowedMentions: NO_MENTIONS });
+      } else {
+        await channel.send({ content: body, allowedMentions: NO_MENTIONS });
+      }
+    }
+    for (const message of existing) {
+      const match = /UF4:PANEL:(\d+)/.exec(message.content || '');
+      if (match && Number(match[1]) >= chunks.length) await message.delete().catch(() => {});
+    }
+  }
+
+  async publishAdExpenses(guild, content) {
+    const channel = await this.getChannel(guild, 'anuncios');
+    if (!channel?.send) return;
+    const chunks = splitText(String(content), 1700);
+    const messages = await fetchAllMessages(channel);
+    const existing = messages.filter(message => message.author?.id === this.client.user.id && /UF4:ADSPEND:\d+/.test(message.content || ''));
+    for (let index = 0; index < chunks.length; index++) {
+      const body = `${chunks[index]}\nUF4:ADSPEND:${index}`;
+      const old = existing.find(message => message.content.includes(`UF4:ADSPEND:${index}`));
+      if (old) {
+        if (old.content !== body) await old.edit({ content: body, allowedMentions: NO_MENTIONS });
+      } else await channel.send({ content: body, allowedMentions: NO_MENTIONS });
+    }
+    for (const message of existing) {
+      const match = /UF4:ADSPEND:(\d+)/.exec(message.content || '');
+      if (match && Number(match[1]) >= chunks.length) await message.delete().catch(() => {});
+    }
+  }
+
   async setupCommands(guild) {
     const channel = await this.getChannel(guild, 'comandos');
     if (!channel) return;
@@ -342,7 +382,8 @@ class DiscordTransport {
       '`/vencidas` mostra as contas que aguardam troca externa; `/vencimentos-proximos` consulta próximas datas.',
       '`/troca-senha` e `/trocar-senhas` registram a senha nova SOMENTE após confirmar que a troca foi realizada na ferramenta externa.',
       'O bot não altera senhas nas ferramentas externas. A conta só volta ao estoque após a confirmação e a publicação das credenciais.',
-      '`/ver`, `/buscar`, `/listar`, `/painel` e `/exportar` consultam o histórico e os valores registrados.',
+      '`/ver`, `/buscar`, `/listar` e `/exportar` consultam o histórico e os valores registrados. O painel atualiza automaticamente no canal próprio.',
+      '`/excluir` é exclusivo da administração, exige confirmação e registra a ação na auditoria. Contas ocupadas e vendas com registros relacionados são protegidas.',
       '`/alertas` configura avisos de vencimento; `/auditoria` mostra responsáveis e alterações.',
       '`/configurar`, `/migrar` e `/backup` são restritos à administração.',
       'As vendas exibem a senha no canal privado e nas consultas autorizadas. Exportações e auditoria não incluem senhas. O armazenamento e os backups preservam a criptografia.',

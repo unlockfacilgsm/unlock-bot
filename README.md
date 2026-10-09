@@ -27,11 +27,11 @@ Após criar a estrutura, copie o ID do canal privado `dados-bot` para `DISCORD_D
 
 | Ferramenta | Planos |
 | --- | --- |
-| 🔓 Unlock Tool | 12 horas — R$ 10,00; 1 mês — R$ 30,00; 3 meses — R$ 55,00; 12 meses — R$ 110,00 |
-| 🔧 Borneo Schematics | 3 dias — R$ 20,00; 1 mês — R$ 35,00; 3 meses — R$ 55,00; 12 meses — R$ 110,00 |
-| 🛠️ TSM Tool | 12 horas — R$ 20,00; 1 mês — R$ 30,00; 3 meses — R$ 55,00 |
-| ⚙️ AMT Tool | 12 horas — R$ 20,00; 1 mês — R$ 30,00; 3 meses — R$ 55,00 |
-| 🔩 TFM Tool | 12 horas — R$ 20,00; 3 meses — R$ 55,00 |
+| 🔓 Unlock Tool | 12 horas — R$ 20,00; 3 meses — R$ 60,00; 6 meses — R$ 90,00 |
+| 🔧 Borneo Schematics | 3 dias — R$ 40,00 (2 HWIDs) |
+| 🛠️ TSM Tool | 12 horas — R$ 25,00 |
+| ⚙️ AMT Tool | 12 horas — R$ 25,00 |
+| 🔩 TFM Tool | 12 horas — R$ 25,00 |
 
 O catálogo fica em `src/catalog.js`. A sugestão de planos mostra apenas os válidos para a ferramenta, com seu preço. Alterar a tabela afeta novas operações; cada venda e renovação preserva o valor registrado na ocasião.
 
@@ -45,7 +45,7 @@ O bot usa sua própria conta e seu cargo de integração, como **Unlock Fácil**
 
 Cada comando também verifica a autorização no bot; consultas e operações devem ser feitas nos canais administrativos configurados.
 
-`/configurar`, `/migrar`, `/backup`, `/restaurar`, `/auditoria` e `/alertas` têm a permissão padrão **Gerenciar servidor** no registro do Discord. Para um cargo de administrador que não tenha essa permissão, libere esses comandos em **Configurações do servidor → Integrações → bot → comandos**. A validação de cargo no bot continua sendo necessária. Vendedores podem usar os demais comandos com o cargo escolhido na configuração e acesso aos canais privados.
+`/configurar`, `/migrar`, `/backup`, `/restaurar`, `/auditoria`, `/alertas` e `/excluir` têm a permissão padrão **Gerenciar servidor** no registro do Discord. Para um cargo de administrador que não tenha essa permissão, libere esses comandos em **Configurações do servidor → Integrações → bot → comandos**. A validação de cargo no bot continua sendo necessária. Vendedores podem usar os demais comandos com o cargo escolhido na configuração e acesso aos canais privados.
 
 Os dados estruturados ficam em um canal privado separado. Preserve seus anexos e o histórico: apagar eventos ou o canal remove a fonte persistente do bot. Os canais visuais são uma interface para acompanhar a operação.
 
@@ -99,13 +99,13 @@ Senhas são preservadas exatamente, incluindo símbolos e espaços. Evite enviar
 | `/buscar termo:<texto> tipo:<tipo>` | Busca por cliente, login, ID ou texto; tipo é opcional |
 | `/listar tipo:<tipo> quantidade:100` | Consulta até 100 registros recentes, com páginas |
 | `/estoque ferramenta:<ferramenta>` | Mostra contas disponíveis, ocupadas e aguardando troca |
-| `/painel` | Resume estoque, pendências, vendas e receitas de renovações |
+| `#⚙️・painel` | Canal de leitura automática com resumo financeiro, estoque, catálogo e instruções; atualiza enquanto o bot está online |
 | `/troca venda:<VEN-...> plano_anterior:<plano> plano_novo:<plano> login:<login> senha:<senha>` | Substitui a conta da venda; motivo e observação são opcionais |
 | `/editar-venda venda:<VEN-...>` | Corrige somente os campos opcionais informados |
 | `/auditoria quantidade:100` | Mostra ações e responsáveis; exclusivo de administradores |
 | `/exportar tipo:<tipo> inicio:<DD/MM/AAAA> fim:<DD/MM/AAAA>` | Envia CSV de registros sem senhas; todos os filtros são opcionais |
 
-Os tipos são `vendas`, `renovacoes`, `trocas`, `vencimentos` e `contas`. Respostas longas são paginadas para respeitar os limites do Discord. Exportações podem conter logins e contatos; mantenha os arquivos nas mãos das pessoas autorizadas.
+`/excluir tipo:<tipo> id:<ID> confirmar:true` permite que administradores excluam uma conta ou registro. A exclusão é permanente e auditada; contas ocupadas/pendentes são protegidas; ao excluir uma venda, seus vencimentos, renovações e trocas vinculados também são removidos e contabilizados na auditoria. Os tipos são `vendas`, `renovacoes`, `trocas`, `vencimentos` e `contas`. Respostas longas são paginadas para respeitar os limites do Discord. Exportações podem conter logins e contatos; mantenha os arquivos nas mãos das pessoas autorizadas.
 
 Para avisos antecipados, use `/alertas habilitado:true antecedencia:1440` para avisar com um dia de antecedência. O intervalo aceito é de 1 a 43.200 minutos. `/alertas habilitado:false` desativa; sem opções, consulta a configuração. O bot precisa estar conectado para enviar avisos.
 
@@ -148,3 +148,14 @@ A restauração rejeita dados existentes para evitar sobrescrever operações. O
 - `npm run keygen`: gera uma chave nova para a instalação inicial; não substitua a chave de uma instalação com histórico.
 
 O catálogo, as regras de negócio, a persistência e a definição dos comandos ficam separados em `src/`. O Discord exige conexão ativa para gravar os eventos e entregar as mensagens. Operações registradas podem aguardar a publicação visual e ser retomadas; mantenha o processo ativo para concluir essas pendências.
+
+
+## Gastos com anúncios
+
+Após atualizar o bot, execute `/configurar` uma vez com um administrador para criar o novo canal privado `📣・gastos-anuncios`. O canal mantém uma mensagem fixa atualizada automaticamente com os lançamentos, enquanto o painel inclui os totais do dia, do mês e acumulado.
+
+- `/anuncio registrar`: informe valor em reais, data `DD/MM/AAAA` (pode ser passada) e, opcionalmente, uma descrição.
+- `/anuncio editar`: informe o ID `ADS-...` e somente os campos que deseja corrigir (valor, data e/ou descrição).
+- `/anuncio listar`: consulta os lançamentos recentes.
+
+O comando `/anuncio` é restrito à administração. Os lançamentos ficam armazenados no registro durável do bot no Discord, junto com a auditoria, e não em um arquivo local.

@@ -15,6 +15,7 @@ class FakeStore {
     this.calls = [];
     this.rows = { vendas: [], renovacoes: [], trocas: [], vencimentos: [] };
     this.accounts = [];
+    this.adExpenses = [];
     this.displayPasswords = new Map();
     this.displayReads = [];
   }
@@ -76,6 +77,13 @@ class FakeStore {
     return { changed: [], errors: [] };
   }
   async listAudit() { return []; }
+  async listAdExpenses() { return structuredClone(this.adExpenses); }
+  async createAdExpense(guild, values) { this.calls.push({ method: 'createAdExpense', guild, values: structuredClone(values) }); const row = { ...values, id: 'ADS-001' }; this.adExpenses.push(row); return structuredClone(row); }
+  async updateAdExpense(guild, values) { this.calls.push({ method: 'updateAdExpense', guild, values: structuredClone(values) }); const index = this.adExpenses.findIndex(row => row.id === values.id); if (index < 0) throw new Error('Gasto não encontrado'); this.adExpenses[index] = { ...this.adExpenses[index], ...values }; return structuredClone(this.adExpenses[index]); }
+  async deleteEntry(guild, type, id, actorId) {
+    this.calls.push({ method: 'deleteEntry', guild, type, id, actorId });
+    return { id, type, relatedDeleted: type === 'vendas' ? 2 : 0 };
+  }
   async listOutbox() { return []; }
 }
 
@@ -291,13 +299,13 @@ test('autocomplete mostra preço apenas dos planos da ferramenta e bloqueia aces
   const { app } = harness();
   const unlock = interaction('vender', { ferramenta: 'Unlock Tool' }, { autocomplete: true, focusedValue: '12' });
   await app.handle(unlock);
-  assert.deepEqual(unlock.choices.map(choice => choice.value), ['12 horas', '12 meses']);
-  assert.match(unlock.choices[0].name, /10,00/);
+  assert.deepEqual(unlock.choices.map(choice => choice.value), ['12 horas']);
+  assert.match(unlock.choices[0].name, /20,00/);
 
   const borneo = interaction('vender', { ferramenta: 'Borneo Schematics' }, { autocomplete: true });
   await app.handle(borneo);
-  assert.deepEqual(borneo.choices.map(choice => choice.value), ['3 dias', '1 mês', '3 meses', '12 meses']);
-  assert.match(borneo.choices[0].name, /20,00/);
+  assert.deepEqual(borneo.choices.map(choice => choice.value), ['3 dias']);
+  assert.match(borneo.choices[0].name, /40,00/);
 
   const denied = interaction('vender', { ferramenta: 'Unlock Tool' }, { autocomplete: true, roles: [] });
   await app.handle(denied);
@@ -309,8 +317,8 @@ test('autocomplete de renovação deriva a ferramenta do ID da venda', async () 
   store.rows.vendas.push({ id: 'VEN-003', tool: 'TFM Tool' });
   const command = interaction('renovar', { venda: ' ven-003 ' }, { autocomplete: true });
   await app.handle(command);
-  assert.deepEqual(command.choices.map(choice => choice.value), ['12 horas', '3 meses']);
-  assert.match(command.choices[0].name, /20,00/);
+  assert.deepEqual(command.choices.map(choice => choice.value), ['12 horas']);
+  assert.match(command.choices[0].name, /25,00/);
   const unknown = interaction('renovar', { venda: 'VEN-999' }, { autocomplete: true });
   await app.handle(unknown);
   assert.deepEqual(unknown.choices, []);
@@ -339,7 +347,7 @@ test('venda por conta não envia credenciais manuais e ambas as alternativas sã
   await app.handle(command);
   const call = store.calls.find(value => value.method === 'createSale');
   assert.equal(call.values.accountId, 'ACC-003');
-  assert.equal(call.values.priceCents, 2000);
+  assert.equal(call.values.priceCents, 2500);
   assert.equal(Object.hasOwn(call.values, 'login'), false);
   assert.equal(Object.hasOwn(call.values, 'password'), false);
 
@@ -356,7 +364,7 @@ test('ferramenta, plano e valores inválidos são recusados antes de qualquer gr
   for (const fields of [
     { ferramenta: 'Invalid' }, { ferramenta: 'Borneo Schematics', plano: '12 horas' },
     { ferramenta: 'TFM Tool', plano: '12 meses' }, { valor: -1 }, { valor: 1.001 },
-    { desconto: 11 }, { cliente: 'Nome\nSenha: injetada' }
+    { desconto: 21 }, { cliente: 'Nome\nSenha: injetada' }
   ]) {
     const { app, store, transport } = harness();
     const command = interaction('vender', manual(fields));
@@ -404,11 +412,33 @@ test('renovação registra receita própria e o painel soma os valores históric
   const original = store.rows.vendas[0];
   assert.equal(original.plan, '12 horas');
   assert.equal(original.priceCents, 1000);
-  assert.equal(store.rows.renovacoes[0].priceCents, 5000);
+  assert.equal(store.rows.renovacoes[0].priceCents, 5500);
   assert.equal(store.rows.renovacoes[0].saleId, 'VEN-001');
-  const panel = interaction('painel');
-  await app.handle(panel);
-  assert.match(content(panel), /Hoje: 2 operação\(ões\).*60,00/);
+  const { dashboardText } = require('../src/reporting');
+  const panel = dashboardText([...store.rows.vendas, ...store.rows.renovacoes], [], NOW);
+  assert.match(panel, /Hoje: 2 operação\(ões\).*65,00/);
+});
+
+
+test('/excluir exige administrador e confirmação explícita antes de apagar', async () => {
+  const denied = harness();
+  const sellerRequest = interaction('excluir', { tipo: 'contas', id: 'ACC-001', confirmar: true });
+  await denied.app.handle(sellerRequest);
+  assert.match(content(sellerRequest), /não está autorizado/i);
+  assert.equal(denied.store.calls.some(call => call.method === 'deleteEntry'), false);
+
+  const unconfirmed = harness();
+  const cancelRequest = interaction('excluir', { tipo: 'vendas', id: 'VEN-001', confirmar: false }, { roles: ['admin'] });
+  await unconfirmed.app.handle(cancelRequest);
+  assert.match(content(cancelRequest), /confirme explicitamente/i);
+  assert.equal(unconfirmed.store.calls.some(call => call.method === 'deleteEntry'), false);
+
+  const allowed = harness();
+  const request = interaction('excluir', { tipo: 'vendas', id: 'VEN-001', confirmar: true }, { roles: ['admin'] });
+  await allowed.app.handle(request);
+  assert.ok(allowed.store.calls.some(call => call.method === 'deleteEntry' && call.id === 'VEN-001' && call.actorId === 'operator'));
+  assert.match(content(request), /excluído/i);
+  assert.match(content(request), /2 registro\(s\) vinculados/i);
 });
 
 test('migração obrigatória bloqueia novas operações e migração concluída desbloqueia', async () => {
@@ -484,14 +514,14 @@ test('editing forwards only chosen fields, preserves amounts and accepts future 
 
 test('replacement requires exact new credentials and both plans, deriving the sale from its ID', async () => {
   const { app, store } = harness();
-  const request = interaction('troca', { venda: 'VEN-001', plano_anterior: '12 horas', plano_novo: '1 mês', login: 'new-login', senha: '  new$&`  ' });
+  const request = interaction('troca', { venda: 'VEN-001', plano_anterior: '12 horas', plano_novo: '3 meses', login: 'new-login', senha: '  new$&`  ' });
   await app.handle(request);
   const call = store.calls[0];
   assert.equal(call.method, 'replaceSaleAccount');
-  assert.equal(call.values.previousPlan, '12 horas'); assert.equal(call.values.newPlan, '1 mês');
+  assert.equal(call.values.previousPlan, '12 horas'); assert.equal(call.values.newPlan, '3 meses');
   assert.equal(call.values.password, '  new$&`  ');
   assert.match(content(request), /Plano anterior: 12 horas/);
-  assert.match(content(request), /Plano novo: 1 mês/);
+  assert.match(content(request), /Plano novo: 3 meses/);
 });
 
 test('troca recusa venda inválida antes de gravar o registro', async () => {
@@ -534,4 +564,22 @@ test('migração com erro mantém o bloqueio de novas vendas', async () => {
   await app.handle(command);
   assert.equal(store.config.migrationRequired, true);
   assert.notEqual(store.config.migrationCompleted, true);
+});
+
+
+test('/anuncio registra gasto em data passada e exige administração', async () => {
+  const denied = harness();
+  const blocked = interaction('anuncio', { valor: 25, data: '01/10/2026' }, { roles: ['seller'], subcommand: 'registrar' });
+  await denied.app.handle(blocked);
+  assert.match(content(blocked), /não está autorizado/i);
+  assert.equal(denied.store.calls.some(call => call.method === 'createAdExpense'), false);
+
+  const { app, store } = harness();
+  const command = interaction('anuncio', { valor: 25.5, data: '01/10/2026', descricao: 'Meta Ads' }, { roles: ['admin'], subcommand: 'registrar' });
+  await app.handle(command);
+  const call = store.calls.find(value => value.method === 'createAdExpense');
+  assert.ok(call);
+  assert.equal(call.values.amountCents, 2550);
+  assert.equal(call.values.date, '2026-10-01');
+  assert.match(content(command), /ADS-001/);
 });

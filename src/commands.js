@@ -1,10 +1,10 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { toolChoices } = require('./catalog');
 
-const ADMIN_COMMANDS = new Set(['configurar', 'migrar', 'backup', 'restaurar', 'auditoria', 'alertas']);
+const ADMIN_COMMANDS = new Set(['configurar', 'migrar', 'backup', 'restaurar', 'auditoria', 'alertas', 'excluir', 'anuncio']);
 const MUTATING_COMMANDS = new Set([
   'configurar', 'migrar', 'restaurar', 'conta', 'vender', 'renovar',
-  'editar-venda', 'troca', 'troca-senha', 'trocar-senhas', 'alertas'
+  'editar-venda', 'troca', 'troca-senha', 'trocar-senhas', 'alertas', 'excluir'
 ]);
 
 const TYPES = [
@@ -161,6 +161,34 @@ function buildCommands() {
     .addIntegerOption(option => option.setName('dias').setDescription('Próximos dias, de 1 a 365')
       .setMinValue(1).setMaxValue(365));
 
+  const deletion = command('excluir', 'Exclui um registro ou conta após confirmação; ação restrita à administração')
+    .addStringOption(option => option.setName('tipo').setDescription('O que deseja excluir').setRequired(true).addChoices(
+      { name: 'Conta do estoque', value: 'contas' }, { name: 'Venda', value: 'vendas' },
+      { name: 'Vencimento', value: 'vencimentos' }, { name: 'Renovação', value: 'renovacoes' }, { name: 'Troca', value: 'trocas' }));
+  string(deletion, 'id', 'ID exato do registro (ACC-, VEN-, VENC-, REN- ou TRC-)', true, 80);
+  deletion.addBooleanOption(option => option.setName('confirmar').setDescription('Confirma a exclusão permanente').setRequired(true));
+
+  const ads = command('anuncio', 'Registra e atualiza gastos com anúncios; acesso restrito à administração')
+    .addSubcommand(subcommand => {
+      subcommand.setName('registrar').setDescription('Registra um gasto com anúncios em uma data específica, inclusive passada');
+      subcommand.addNumberOption(option => option.setName('valor').setDescription('Valor gasto em reais').setRequired(true).setMinValue(0.01).setMaxValue(1000000));
+      string(subcommand, 'data', 'Data do gasto DD/MM/AAAA', true, 10, 10);
+      string(subcommand, 'descricao', 'Campanha, plataforma ou observação', false, 200);
+      return subcommand;
+    })
+    .addSubcommand(subcommand => {
+      subcommand.setName('editar').setDescription('Altera um gasto já registrado');
+      string(subcommand, 'id', 'ID do gasto, por exemplo ADS-001', true, 32);
+      subcommand.addNumberOption(option => option.setName('valor').setDescription('Novo valor em reais').setMinValue(0.01).setMaxValue(1000000));
+      string(subcommand, 'data', 'Nova data DD/MM/AAAA', false, 10, 10);
+      string(subcommand, 'descricao', 'Nova descrição', false, 200);
+      return subcommand;
+    })
+    .addSubcommand(subcommand => {
+      subcommand.setName('listar').setDescription('Lista os gastos de anúncios registrados');
+      return subcommand;
+    });
+
   const audit = command('auditoria', 'Consulta responsáveis e ações recentes, sem expor senhas')
     .addIntegerOption(option => option.setName('quantidade').setDescription('Quantidade de ações, de 1 a 100')
       .setMinValue(1).setMaxValue(100));
@@ -186,7 +214,7 @@ function buildCommands() {
     command('backup', 'Envia uma cópia criptografada dos dados para o canal privado'),
     restore, audit, account, stock, sale('vender'), renew, edit,
     replacement, password, passwords, expired, view, search, list, upcoming,
-    command('painel', 'Mostra estoque, pendências e receitas registradas'), alerts, exporting
+    deletion, alerts, ads, exporting
   ];
 }
 

@@ -2,19 +2,19 @@
 
 const TOOLS = Object.freeze({
   'Unlock Tool': { emoji: '🔓', channelKey: 'unlockTool', channelName: '🆓・unlock-tool', plans: {
-    '12 horas': { priceCents: 1000, hours: 12 }, '1 mês': { priceCents: 3000, months: 1 }, '3 meses': { priceCents: 5500, months: 3 }, '12 meses': { priceCents: 11000, months: 12 }
+    '12 horas': { priceCents: 2000, hours: 12 }, '3 meses': { priceCents: 6000, months: 3 }, '6 meses': { priceCents: 9000, months: 6 }
   } },
-  'Borneo Schematics': { emoji: '🔧', channelKey: 'borneoSchematics', channelName: '🆓・borneo-schematics', plans: {
-    '3 dias': { priceCents: 2000, days: 3 }, '1 mês': { priceCents: 3500, months: 1 }, '3 meses': { priceCents: 5500, months: 3 }, '12 meses': { priceCents: 11000, months: 12 }
+  'Borneo Schematics': { emoji: '🔧', channelKey: 'borneoSchematics', channelName: '🆓・borneo-schematics', hwids: 2, plans: {
+    '3 dias': { priceCents: 4000, days: 3 }
   } },
   'TSM Tool': { emoji: '🛠️', channelKey: 'tsmTool', channelName: '🆓・tsm-tool', plans: {
-    '12 horas': { priceCents: 2000, hours: 12 }, '1 mês': { priceCents: 3000, months: 1 }, '3 meses': { priceCents: 5500, months: 3 }
+    '12 horas': { priceCents: 2500, hours: 12 }
   } },
   'AMT Tool': { emoji: '⚙️', channelKey: 'amtTool', channelName: '🆓・amt-tool', plans: {
-    '12 horas': { priceCents: 2000, hours: 12 }, '1 mês': { priceCents: 3000, months: 1 }, '3 meses': { priceCents: 5500, months: 3 }
+    '12 horas': { priceCents: 2500, hours: 12 }
   } },
   'TFM Tool': { emoji: '🔩', channelKey: 'tfmTool', channelName: '🆓・tfm-tool', plans: {
-    '12 horas': { priceCents: 2000, hours: 12 }, '3 meses': { priceCents: 5500, months: 3 }
+    '12 horas': { priceCents: 2500, hours: 12 }
   } }
 });
 

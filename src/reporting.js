@@ -27,7 +27,7 @@ function summarize(records, now = new Date()) {
   return totals;
 }
 
-function dashboardText(records, accounts, now = new Date()) {
+function dashboardText(records, accounts, now = new Date(), adExpenses = []) {
   const totals = summarize(records, now);
   const lines = ['📊 **PAINEL UNLOCK FÁCIL**', 'Receitas de vendas e renovações, pelo valor registrado.', '',
     `Hoje: ${totals.today.count} operação(ões) — **${money(totals.today.value)}**`,
@@ -39,10 +39,30 @@ function dashboardText(records, accounts, now = new Date()) {
     const bucket = totals.days[dateKey(date)] || { count: 0, value: 0 };
     lines.push(`${formatBR(date).split(' ')[0]}: ${bucket.count} — ${money(bucket.value)}`);
   }
+  const sold = {};
+  for (const record of records.filter(record => ['vendas', 'renovacoes'].includes(record.type))) {
+    const tool = record.tool || 'Ferramenta desconhecida';
+    const plan = record.plan || 'Plano desconhecido';
+    sold[tool] ||= {};
+    sold[tool][plan] = (sold[tool][plan] || 0) + 1;
+  }
   lines.push('', '🛠️ **Por ferramenta**');
-  for (const [tool, stats] of Object.entries(totals.tools)) lines.push(`${tool}: ${stats.count} — ${money(stats.value)}`);
-  lines.push('', '📦 **Por plano**');
-  for (const [plan, stats] of Object.entries(totals.plans)) lines.push(`${plan}: ${stats.count} — ${money(stats.value)}`);
+  for (const [tool, stats] of Object.entries(totals.tools)) {
+    lines.push(`**${tool}**: ${stats.count} operação(ões) — ${money(stats.value)}`);
+    for (const [plan, count] of Object.entries(sold[tool] || {}).sort(([a], [b]) => a.localeCompare(b, 'pt-BR'))) lines.push(`  • ${plan}: **${count} operação(ões)**`);
+  }
+  for (const [tool, plans] of Object.entries(sold)) {
+    if (Object.hasOwn(totals.tools, tool)) continue;
+    lines.push(`**${tool}**`);
+    for (const [plan, count] of Object.entries(plans)) lines.push(`  • ${plan}: **${count} operação(ões)**`);
+  }
+  if (!Object.keys(sold).length) lines.push('Nenhuma venda registrada.');
+  const todayKey = dateKey(now);
+  const monthKey = todayKey.slice(0, 7);
+  const spendToday = adExpenses.filter(item => item.date === todayKey).reduce((sum, item) => sum + item.amountCents, 0);
+  const spendMonth = adExpenses.filter(item => item.date?.slice(0, 7) === monthKey).reduce((sum, item) => sum + item.amountCents, 0);
+  const spendTotal = adExpenses.reduce((sum, item) => sum + item.amountCents, 0);
+  lines.push('', '📣 **Gastos com anúncios**', `Hoje: **${money(spendToday)}**`, `Este mês: **${money(spendMonth)}**`, `Total registrado: **${money(spendTotal)}**`, `Resultado do mês após anúncios: **${money(totals.month.value - spendMonth)}**`);
   lines.push('', `Contas: ${accounts.filter(a => a.status === 'available' && !a.pendingDelivery).length} disponíveis; ${accounts.filter(a => a.status === 'occupied').length} ocupadas; ${accounts.filter(a => a.pendingDelivery).length} aguardando entrega.`);
   if (totals.estimated) lines.push(`⚠️ ${totals.estimated} valor(es) do histórico foram estimados durante a migração.`);
   if (totals.unknown) lines.push(`⚠️ ${totals.unknown} operação(ões) antigas sem preço conhecido não foram incluídas no valor total.`);

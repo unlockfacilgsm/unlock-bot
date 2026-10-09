@@ -9,7 +9,7 @@
     "refresh-records": "node scripts/refresh-records.js",
     "audit-legacy": "node scripts/audit-legacy.js",
     "check": "node scripts/check.js",
-    "test": "node --test --test-isolation=none",
+    "test": "node --test",
     "keygen": "node scripts/keygen.js"
   },
   "engines": {
