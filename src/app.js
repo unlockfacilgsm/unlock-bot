@@ -4,7 +4,7 @@ const { PermissionFlagsBits, MessageFlags, escapeMarkdown } = require('discord.j
 const catalog = require('./catalog');
 const { formatBR, buildRegisteredAt, parseDateOnlyBR, parseDateTimeBR } = require('./dates');
 const validation = require('./validation');
-const { dashboardText, exportCsv } = require('./reporting');
+const { dashboardText, monthlySalesText, exportCsv } = require('./reporting');
 const { ADMIN_COMMANDS, MUTATING_COMMANDS } = require('./commands');
 const { renderRecord, recordBlock, showPages } = require('./transport');
 const { formatDiscordError, safeErrorDetails } = require('./discord-errors');
@@ -353,6 +353,16 @@ class BotApp {
       const query = command === 'buscar' ? validation.text(str('termo'), 'Termo', 200) : undefined;
       const rows = (await this.records(type, query)).slice(0, command === 'listar' ? option(interaction, 'Integer', 'quantidade') || 20 : 100);
       return showPages(interaction, rows.length ? await Promise.all(rows.map(record => this.displayRecord(record))) : 'Nenhum registro encontrado.');
+    }
+
+    if (command === 'vendas-mes') {
+      const month = option(interaction, 'Integer', 'mes');
+      const year = option(interaction, 'Integer', 'ano');
+      const [sales, renewals] = await Promise.all([
+        this.store.listRecords(guildId, 'vendas'),
+        this.store.listRecords(guildId, 'renovacoes')
+      ]);
+      return showPages(interaction, monthlySalesText([...sales, ...renewals], month, year));
     }
 
     if (command === 'vencimentos-proximos') {

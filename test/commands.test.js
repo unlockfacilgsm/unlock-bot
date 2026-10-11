@@ -36,7 +36,7 @@ test('o registro serializa sem nomes duplicados e contém todos os fluxos', () =
   assert.deepEqual(commands.map(command => command.name).sort(), [
     'alertas', 'anuncio', 'auditoria', 'backup', 'buscar', 'configurar', 'conta', 'estoque',
     'editar-venda', 'excluir', 'exportar', 'listar', 'migrar', 'renovar', 'restaurar', 'troca', 'troca-senha',
-    'trocar-senhas', 'vencidas', 'vencimentos-proximos', 'vender', 'ver'
+    'trocar-senhas', 'vencidas', 'vencimentos-proximos', 'vendas-mes', 'vender', 'ver'
   ].sort());
 
   // O Discord rejeita opções obrigatórias depois de opcionais, inclusive em subcomandos.

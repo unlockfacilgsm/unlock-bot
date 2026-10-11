@@ -157,6 +157,10 @@ function buildCommands() {
     .addIntegerOption(option => option.setName('quantidade').setDescription('Quantidade de registros, de 1 a 100')
       .setMinValue(1).setMaxValue(100));
 
+  const monthlySales = command('vendas-mes', 'Mostra as vendas e renovações de um mês, dia a dia')
+    .addIntegerOption(option => option.setName('mes').setDescription('Mês de 1 a 12').setRequired(true).setMinValue(1).setMaxValue(12))
+    .addIntegerOption(option => option.setName('ano').setDescription('Ano entre 2000 e 2100').setRequired(true).setMinValue(2000).setMaxValue(2100));
+
   const upcoming = command('vencimentos-proximos', 'Lista vencimentos nos próximos dias')
     .addIntegerOption(option => option.setName('dias').setDescription('Próximos dias, de 1 a 365')
       .setMinValue(1).setMaxValue(365));
@@ -213,7 +217,7 @@ function buildCommands() {
     command('migrar', 'Importa o histórico legado escrito por este bot, preservando os canais'),
     command('backup', 'Envia uma cópia criptografada dos dados para o canal privado'),
     restore, audit, account, stock, sale('vender'), renew, edit,
-    replacement, password, passwords, expired, view, search, list, upcoming,
+    replacement, password, passwords, expired, view, search, list, monthlySales, upcoming,
     deletion, alerts, ads, exporting
   ];
 }

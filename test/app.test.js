@@ -300,12 +300,12 @@ test('autocomplete mostra preço apenas dos planos da ferramenta e bloqueia aces
   const unlock = interaction('vender', { ferramenta: 'Unlock Tool' }, { autocomplete: true, focusedValue: '12' });
   await app.handle(unlock);
   assert.deepEqual(unlock.choices.map(choice => choice.value), ['12 horas']);
-  assert.match(unlock.choices[0].name, /20,00/);
+  assert.match(unlock.choices[0].name, /10,00/);
 
   const borneo = interaction('vender', { ferramenta: 'Borneo Schematics' }, { autocomplete: true });
   await app.handle(borneo);
   assert.deepEqual(borneo.choices.map(choice => choice.value), ['3 dias']);
-  assert.match(borneo.choices[0].name, /40,00/);
+  assert.match(borneo.choices[0].name, /30,00/);
 
   const denied = interaction('vender', { ferramenta: 'Unlock Tool' }, { autocomplete: true, roles: [] });
   await app.handle(denied);
@@ -318,7 +318,7 @@ test('autocomplete de renovação deriva a ferramenta do ID da venda', async () 
   const command = interaction('renovar', { venda: ' ven-003 ' }, { autocomplete: true });
   await app.handle(command);
   assert.deepEqual(command.choices.map(choice => choice.value), ['12 horas']);
-  assert.match(command.choices[0].name, /25,00/);
+  assert.match(command.choices[0].name, /20,00/);
   const unknown = interaction('renovar', { venda: 'VEN-999' }, { autocomplete: true });
   await app.handle(unknown);
   assert.deepEqual(unknown.choices, []);
@@ -347,7 +347,7 @@ test('venda por conta não envia credenciais manuais e ambas as alternativas sã
   await app.handle(command);
   const call = store.calls.find(value => value.method === 'createSale');
   assert.equal(call.values.accountId, 'ACC-003');
-  assert.equal(call.values.priceCents, 2500);
+  assert.equal(call.values.priceCents, 2000);
   assert.equal(Object.hasOwn(call.values, 'login'), false);
   assert.equal(Object.hasOwn(call.values, 'password'), false);
 

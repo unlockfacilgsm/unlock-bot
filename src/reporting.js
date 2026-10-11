@@ -33,11 +33,13 @@ function dashboardText(records, accounts, now = new Date(), adExpenses = []) {
     `Hoje: ${totals.today.count} operação(ões) — **${money(totals.today.value)}**`,
     `Ontem: ${totals.yesterday.count} — ${money(totals.yesterday.value)}`,
     `Este mês: ${totals.month.count} — **${money(totals.month.value)}**`,
-    `Mês anterior: ${totals.previousMonth.count} — ${money(totals.previousMonth.value)}`, '', '📆 **Últimos 7 dias**'];
-  for (let day = 6; day >= 0; day--) {
-    const date = new Date(now.getTime() - day * 86_400_000);
-    const bucket = totals.days[dateKey(date)] || { count: 0, value: 0 };
-    lines.push(`${formatBR(date).split(' ')[0]}: ${bucket.count} — ${money(bucket.value)}`);
+    `Mês anterior: ${totals.previousMonth.count} — ${money(totals.previousMonth.value)}`, '', '📆 **Vendas e renovações por dia — histórico completo**'];
+  const historicalDays = Object.keys(totals.days).sort();
+  if (!historicalDays.length) lines.push('Nenhuma venda registrada.');
+  for (const day of historicalDays) {
+    const bucket = totals.days[day];
+    const [year, month, date] = day.split('-');
+    lines.push(`${date}/${month}/${year}: ${bucket.count} operação(ões) — ${money(bucket.value)}`);
   }
   const sold = {};
   for (const record of records.filter(record => ['vendas', 'renovacoes'].includes(record.type))) {
@@ -69,6 +71,36 @@ function dashboardText(records, accounts, now = new Date(), adExpenses = []) {
   return lines.join('\n');
 }
 
+
+function monthlySalesText(records, month, year) {
+  if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) || year < 2000 || year > 2100) {
+    throw new Error('Informe um mês de 1 a 12 e um ano entre 2000 e 2100.');
+  }
+  const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+  const totals = new Map();
+  for (const record of records.filter(item => ['vendas', 'renovacoes'].includes(item.type))) {
+    if (!Number.isFinite(Date.parse(record.registeredAt))) continue;
+    const day = dateKey(record.registeredAt);
+    if (day.startsWith(monthKey)) {
+      const bucket = totals.get(day) || { count: 0, value: 0 };
+      bucket.count++;
+      bucket.value += Number.isSafeInteger(record.priceCents) ? record.priceCents : 0;
+      totals.set(day, bucket);
+    }
+  }
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const lines = [`📆 **VENDAS DO MÊS — ${String(month).padStart(2, '0')}/${year}**`, 'Vendas e renovações, pelo valor registrado.', ''];
+  let count = 0, value = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const day = `${monthKey}-${String(d).padStart(2, '0')}`;
+    const bucket = totals.get(day) || { count: 0, value: 0 };
+    count += bucket.count; value += bucket.value;
+    lines.push(`${String(d).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}: ${bucket.count} operação(ões) — ${money(bucket.value)}`);
+  }
+  lines.push('', `**Total do mês:** ${count} operação(ões) — **${money(value)}**`);
+  return lines.join('\n');
+}
+
 function csvCell(value) {
   let text = String(value ?? '');
   if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
@@ -80,4 +112,4 @@ function exportCsv(records) {
   return Buffer.from('\uFEFF' + [fields.map(csvCell).join(';'), ...records.map(record => fields.map(field => csvCell(record[field])).join(';'))].join('\r\n'), 'utf8');
 }
 
-module.exports = { summarize, dashboardText, exportCsv };
+module.exports = { summarize, dashboardText, monthlySalesText, exportCsv };

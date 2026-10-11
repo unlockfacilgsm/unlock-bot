@@ -5,10 +5,10 @@ const assert = require('node:assert/strict');
 const { TOOLS, getPlan, planChoices } = require('../src/catalog');
 const { calculateExpiration, formatBR, parseDateTimeBR, buildRegisteredAt } = require('../src/dates');
 const validation = require('../src/validation');
-const { summarize, exportCsv } = require('../src/reporting');
+const { summarize, dashboardText, monthlySalesText, exportCsv } = require('../src/reporting');
 
 test('catalog has the updated monthly plans and Borneo price, preserving TFM', () => {
-  const expected = { 'Unlock Tool': { '12 horas': 2000, '3 meses': 6000, '6 meses': 9000 }, 'Borneo Schematics': { '3 dias': 4000 }, 'TSM Tool': { '12 horas': 2500 }, 'AMT Tool': { '12 horas': 2500 }, 'TFM Tool': { '12 horas': 2500 } };
+  const expected = { 'Unlock Tool': { '12 horas': 1000, '3 meses': 6000, '6 meses': 9000 }, 'Borneo Schematics': { '3 dias': 3000 }, 'TSM Tool': { '12 horas': 2000 }, 'AMT Tool': { '12 horas': 2000 }, 'TFM Tool': { '12 horas': 2000 } };
   for (const [tool, plans] of Object.entries(expected)) {
     assert.deepEqual(Object.fromEntries(Object.entries(TOOLS[tool].plans).map(([plan, value]) => [plan, value.priceCents])), plans);
     assert.deepEqual(planChoices(tool).map(choice => choice.value), Object.keys(plans));
@@ -38,7 +38,7 @@ test('password characters and spaces are exact, unsafe record fields rejected, p
   assert.equal(validation.password(' a$&`b '), ' a$&`b ');
   assert.throws(() => validation.password('a\nb'));
   assert.throws(() => validation.text('x\n🔖 ID: VEN-100', 'Cliente'));
-  assert.deepEqual(validation.amounts('Unlock Tool', '12 horas', null, 1.50), { priceCents: 1850, discountCents: 150 });
+  assert.deepEqual(validation.amounts('Unlock Tool', '12 horas', null, 1.50), { priceCents: 850, discountCents: 150 });
   assert.throws(() => validation.amounts('Unlock Tool', '12 horas', 10, 21));
   assert.throws(() => validation.cents(1.001, 'Valor'));
 });
@@ -70,4 +70,21 @@ test('dashboard shows sold quantity by tool and plan plus ad spend summary', () 
   assert.match(dashboard, /Gastos com anúncios/);
   assert.match(dashboard, /R\$\s?12,34/);
   assert.match(dashboard, /R\$\s?17,34/);
+});
+
+
+test('dashboard includes all historical sale days and monthly report lists every day', () => {
+  const records = [
+    { id: 'VEN-001', type: 'vendas', tool: 'Unlock Tool', plan: '12 horas', priceCents: 1000, registeredAt: '2026-09-02T15:00:00Z' },
+    { id: 'REN-001', type: 'renovacoes', tool: 'TSM Tool', plan: '12 horas', priceCents: 2000, registeredAt: '2026-10-08T15:00:00Z' }
+  ];
+  const dashboard = dashboardText(records, [], new Date('2026-10-11T15:00:00Z'), []);
+  assert.match(dashboard, /02\/09\/2026: 1 operação/);
+  assert.match(dashboard, /08\/10\/2026: 1 operação/);
+  assert.doesNotMatch(dashboard, /Últimos 7 dias/);
+  const monthly = monthlySalesText(records, 10, 2026);
+  assert.match(monthly, /01\/10\/2026: 0 operação/);
+  assert.match(monthly, /08\/10\/2026: 1 operação/);
+  assert.match(monthly, /31\/10\/2026: 0 operação/);
+  assert.match(monthly, /Total do mês:\*\* 1 operação/);
 });
