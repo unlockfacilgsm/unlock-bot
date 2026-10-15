@@ -27,11 +27,11 @@ Após criar a estrutura, copie o ID do canal privado `dados-bot` para `DISCORD_D
 
 | Ferramenta | Planos |
 | --- | --- |
-| 🔓 Unlock Tool | 12 horas — R$ 10,00; 3 meses — R$ 60,00; 6 meses — R$ 90,00 |
-| 🔧 Borneo Schematics | 3 dias — R$ 30,00 (2 HWIDs) |
-| 🛠️ TSM Tool | 12 horas — R$ 20,00 |
-| ⚙️ AMT Tool | 12 horas — R$ 20,00 |
-| 🔩 TFM Tool | 12 horas — R$ 20,00 |
+| 🔓 Unlock Tool | 12 horas — R$ 10,00; 1 mês — R$ 30,00; 3 meses — R$ 60,00; 6 meses — R$ 90,00 |
+| 🔧 Borneo Schematics | 3 dias — R$ 30,00; 1 mês — R$ 55,00 (2 HWIDs) |
+| 🛠️ TSM Tool | 12 horas — R$ 20,00; 1 mês — R$ 40,00 |
+| ⚙️ AMT Tool | 12 horas — R$ 20,00; 1 mês — R$ 40,00 |
+| 🔩 TFM Tool | 12 horas — R$ 20,00; 1 mês — R$ 40,00 |
 
 O catálogo fica em `src/catalog.js`. A sugestão de planos mostra apenas os válidos para a ferramenta, com seu preço. Alterar a tabela afeta novas operações; cada venda e renovação preserva o valor registrado na ocasião. O painel apresenta todos os dias com vendas/renovações existentes no histórico. Use `/vendas-mes mes:<1–12> ano:<AAAA>` para ver o mês inteiro, dia a dia, incluindo dias sem vendas.
 

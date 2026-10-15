@@ -304,7 +304,8 @@ test('autocomplete mostra preço apenas dos planos da ferramenta e bloqueia aces
 
   const borneo = interaction('vender', { ferramenta: 'Borneo Schematics' }, { autocomplete: true });
   await app.handle(borneo);
-  assert.deepEqual(borneo.choices.map(choice => choice.value), ['3 dias']);
+  assert.deepEqual(borneo.choices.map(choice => choice.value), ['3 dias', '1 mês']);
+  assert.match(borneo.choices[1].name, /50,00/);
   assert.match(borneo.choices[0].name, /30,00/);
 
   const denied = interaction('vender', { ferramenta: 'Unlock Tool' }, { autocomplete: true, roles: [] });
@@ -317,8 +318,9 @@ test('autocomplete de renovação deriva a ferramenta do ID da venda', async () 
   store.rows.vendas.push({ id: 'VEN-003', tool: 'TFM Tool' });
   const command = interaction('renovar', { venda: ' ven-003 ' }, { autocomplete: true });
   await app.handle(command);
-  assert.deepEqual(command.choices.map(choice => choice.value), ['12 horas']);
+  assert.deepEqual(command.choices.map(choice => choice.value), ['12 horas', '1 mês']);
   assert.match(command.choices[0].name, /20,00/);
+  assert.match(command.choices[1].name, /40,00/);
   const unknown = interaction('renovar', { venda: 'VEN-999' }, { autocomplete: true });
   await app.handle(unknown);
   assert.deepEqual(unknown.choices, []);
