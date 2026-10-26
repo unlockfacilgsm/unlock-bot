@@ -27,6 +27,7 @@ class BotApp {
     this.runningTick = null;
     this.stopping = false;
     this.requiresMigration = false;
+    this.orphansPurged = false;
   }
 
   async authorization(interaction) {
@@ -47,7 +48,8 @@ class BotApp {
       }
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const command = interaction.commandName;
-      if (!access.seller || (ADMIN_COMMANDS.has(command) && !access.admin)) throw new Error('Seu cargo não está autorizado a executar este comando.');
+      const adminOnly = ADMIN_COMMANDS.has(command) || (command === 'conta' && interaction.options.getSubcommand() === 'excluir');
+      if (!access.seller || (adminOnly && !access.admin)) throw new Error('Seu cargo não está autorizado a executar este comando.');
       if (this.stopping) throw new Error('O bot está reiniciando. Tente novamente em alguns instantes.');
       const channels = await this.store.getConfig(this.guildId, 'channels', {});
       const setupCommands = ['configurar', 'migrar', 'restaurar', 'backup'];
@@ -78,12 +80,14 @@ class BotApp {
     const focused = interaction.options.getFocused(true);
     if (!['plano', 'plano_anterior', 'plano_novo'].includes(focused.name)) return interaction.respond([]);
     let tool = option(interaction, 'String', 'ferramenta');
-    if (['renovar', 'editar-venda', 'troca'].includes(interaction.commandName)) {
+    const existingSale = ['renovar', 'editar-venda', 'troca'].includes(interaction.commandName);
+    if (existingSale) {
       const saleId = option(interaction, 'String', 'venda');
       const sale = saleId ? await this.store.getRecord(this.guildId, 'vendas', saleId.trim().toUpperCase()) : null;
       tool = sale?.tool;
     }
-    return interaction.respond(catalog.planChoices(tool, focused.value));
+    // Credits are only sold as a new sale; they have no period to renew or replace.
+    return interaction.respond(catalog.planChoices(tool, focused.value, { credits: !existingSale }));
   }
 
   async publishChanges(interaction, content) {
@@ -231,6 +235,23 @@ class BotApp {
         const account = await this.store.upsertAccount(guildId, { tool, login: validation.text(str('login'), 'Login'), password: validation.password(str('senha')), actorId });
         return this.publishChanges(interaction, `✅ Conta **${safe(account.id)}** adicionada ao estoque de ${safe(tool)}.`);
       }
+      if (subcommand === 'excluir') {
+        if (option(interaction, 'Boolean', 'confirmar') !== true) throw new Error('Exclusão cancelada: confirme explicitamente para continuar.');
+        const ids = [...new Set(validation.text(str('contas'), 'Contas', 1000).split(',').map(value => value.trim()).filter(Boolean).map(value => validation.id(value, 'ACC')))];
+        if (!ids.length) throw new Error('Informe ao menos um ID ACC.');
+        if (ids.length > 50) throw new Error('Exclua até 50 contas por comando.');
+        const lines = [];
+        let deleted = 0;
+        // Each account is an independent commit: one protected account does not block the others.
+        for (const id of ids) {
+          try {
+            const result = await this.store.deleteEntry(guildId, 'contas', id, actorId);
+            deleted++;
+            lines.push(`🗑️ ${safe(id)} excluída.${result.saleId ? ` O vencimento pendente da venda ${safe(result.saleId)} foi encerrado.` : ''}`);
+          } catch (error) { lines.push(`⚠️ ${safe(id)}: ${safe(error.message)}`); }
+        }
+        return this.publishChanges(interaction, [`✅ ${deleted} de ${ids.length} conta(s) excluída(s) do estoque. A publicação no canal da ferramenta é removida e a ação fica na auditoria.`, ...lines].join('\n'));
+      }
       if (subcommand === 'senha') {
         validation.confirmed(option(interaction, 'Boolean', 'confirmada'));
         const account = await this.store.updateAccountPassword(guildId, { accountId: validation.id(str('conta'), 'ACC'), newPassword: validation.password(str('nova_senha')), actorId });
@@ -250,6 +271,17 @@ class BotApp {
       const tool = str('ferramenta'), plan = str('plano');
       const accountId = str('conta');
       const login = str('login'), password = str('senha');
+      const credits = option(interaction, 'Integer', 'creditos');
+      if (catalog.isCreditPlan(tool, plan)) {
+        if (credits == null) throw new Error('Informe a quantidade em creditos para o plano Créditos.');
+        if (accountId || password != null) throw new Error('Venda de créditos não usa conta do estoque nem senha; informe apenas o login do cliente, se quiser.');
+        const values = validation.amounts(tool, plan, number('valor'), number('desconto'), validation.credits(credits));
+        const sale = await this.store.createSale(guildId, { client: validation.text(str('cliente'), 'Cliente'), tool, plan, credits,
+          ...(login ? { login: validation.text(login, 'Login') } : {}),
+          ...values, registeredAt: buildRegisteredAt(str('data'), str('hora'), now).toISOString(), actorId });
+        return this.publishChanges(interaction, `✅ Venda **${safe(sale.id)}** registrada: **${credits} crédito(s)** de ${safe(tool)}.${sale.login ? `\nLogin: ${safe(sale.login)}` : ''}\nValor: **${catalog.money(sale.priceCents)}**`);
+      }
+      if (credits != null) throw new Error('A quantidade de créditos só vale para o plano Créditos.');
       if (accountId && (login != null || password != null)) throw new Error('Escolha a conta pelo ID ou informe login e senha manualmente.');
       if (!accountId && (!login || password == null)) throw new Error('Informe uma conta disponível ou preencha login e senha.');
       const values = validation.amounts(tool, plan, number('valor'), number('desconto'));
@@ -286,7 +318,7 @@ class BotApp {
       if (str('data') || str('hora')) changes.registeredAt = correctedDate(str('data'), str('hora'), sale.registeredAt);
       if (str('vencimento') || str('hora_vencimento')) changes.expiresAt = correctedDate(str('vencimento'), str('hora_vencimento'), sale.expiresAt);
       const edited = await this.store.editSale(guildId, { saleId, changes, actorId, editedAt: registeredAt });
-      return this.publishChanges(interaction, `✅ Venda **${safe(edited.id)}** atualizada.\nVencimento: **${formatBR(edited.expiresAt)}**`);
+      return this.publishChanges(interaction, `✅ Venda **${safe(edited.id)}** atualizada.${edited.expiresAt ? `\nVencimento: **${formatBR(edited.expiresAt)}**` : ''}`);
     }
 
     if (command === 'troca') {
@@ -377,7 +409,7 @@ class BotApp {
       const type = str('tipo');
       const id = validation.id(str('id'), type === 'contas' ? 'ACC' : ({ vendas: 'VEN', vencimentos: 'VENC', renovacoes: 'REN', trocas: 'TRC' })[type]);
       const deleted = await this.store.deleteEntry(guildId, type, id, actorId);
-      return this.publishChanges(interaction, `🗑️ Registro **${safe(deleted.id)}** (${safe(deleted.type)}) excluído.${deleted.relatedDeleted ? ` Também foram excluídos ${deleted.relatedDeleted} registro(s) vinculados à venda.` : ''} A ação foi registrada na auditoria.`);
+      return this.publishChanges(interaction, `🗑️ Registro **${safe(deleted.id)}** (${safe(deleted.type)}) excluído.${deleted.relatedDeleted ? ` Também foram excluídos ${deleted.relatedDeleted} registro(s) vinculados à venda.` : ''}${deleted.saleId ? ` O vencimento pendente da venda ${safe(deleted.saleId)} foi encerrado.` : ''} A publicação no canal é removida e a ação foi registrada na auditoria.`);
     }
 
     if (command === 'auditoria') {
@@ -413,7 +445,7 @@ class BotApp {
     const panelRecords = await this.records('tudo');
     const panelAccounts = await this.store.listAccounts(this.guildId);
     const adExpenses = this.store.listAdExpenses ? await this.store.listAdExpenses(this.guildId) : [];
-    const catalogLines = ['📚 **CATÁLOGO ATUAL — ALUGUEL DE ACESSO**', ...Object.entries(catalog.TOOLS).map(([name, item]) => `${item.emoji} **${name}**: ${Object.entries(item.plans).map(([plan, data]) => `${plan} — ${catalog.money(data.priceCents)}`).join(' | ')}${item.hwids ? ` (${item.hwids} HWIDs)` : ''}`), '', 'Use `/vender` para registrar uma venda; `/conta adicionar` para cadastrar contas; `/buscar` e `/listar` para consultar registros; `/excluir` é restrito à administração.', 'Valores registrados são os informados no sistema; consulte compatibilidade da ferramenta antes de oferecer acesso.'];
+    const catalogLines = ['📚 **CATÁLOGO ATUAL — ALUGUEL DE ACESSO**', ...Object.entries(catalog.TOOLS).map(([name, item]) => `${item.emoji} **${name}**: ${Object.entries(item.plans).map(([plan, data]) => `${plan} — ${catalog.planPrice(data)}`).join(' | ')}${item.hwids ? ` (${item.hwids} HWIDs)` : ''}`), '', 'Use `/vender` para registrar uma venda (no plano Créditos, informe `creditos`); `/conta adicionar` para cadastrar contas; `/conta excluir` remove contas do estoque; `/buscar` e `/listar` para consultar registros; `/excluir` é restrito à administração.', 'Valores registrados são os informados no sistema; consulte compatibilidade da ferramenta antes de oferecer acesso.'];
     await this.transport.publishPanel?.(guild, `${dashboardText(panelRecords, panelAccounts, this.clock(), adExpenses)}\n\n${catalogLines.join('\n')}`);
     if (channels.anuncios) {
       const lines = ['📣 **REGISTRO DE GASTOS COM ANÚNCIOS**', 'Dados fixos — atualizados automaticamente pelo bot.', ''];
@@ -434,6 +466,10 @@ class BotApp {
       await this.store.expireSales(this.guildId, this.clock().toISOString());
       await this.transport.reminders(guild);
       await this.transport.flush(guild);
+      if (!this.orphansPurged && this.transport.purgeOrphanAccounts) {
+        await this.transport.purgeOrphanAccounts(guild);
+        this.orphansPurged = true;
+      }
       await this.refreshReports(guild);
       const lastBackup = await this.store.getConfig(this.guildId, 'lastBackupAt', null);
       if (!lastBackup || this.clock().getTime() - Date.parse(lastBackup) >= 86_400_000) {

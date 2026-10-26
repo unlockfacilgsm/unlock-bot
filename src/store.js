@@ -4,7 +4,7 @@ const { randomUUID, randomBytes, createHmac, timingSafeEqual } = require('node:c
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { normalizeEncryptionKey, encryptString, decryptString } = require('./crypto');
 const { calculateExpiration } = require('./dates');
-const { TOOLS, getPlan } = require('./catalog');
+const { TOOLS, getPlan, isCreditPlan } = require('./catalog');
 const { password: validatePassword } = require('./validation');
 
 const TYPES = Object.freeze({ vendas: 'VEN', vencimentos: 'VENC', renovacoes: 'REN', trocas: 'TRC' });
@@ -370,7 +370,7 @@ class Store {
   }
 
   _hasPending(state, accountId) {
-    return Object.values(state.outbox).some((entry) => entry.kind === 'free-account' && entry.status !== 'delivered' && entry.payload.accountId === accountId);
+    return Object.values(state.outbox).some((entry) => entry.kind === 'free-account' && !['delivered', 'cancelled'].includes(entry.status) && entry.payload.accountId === accountId);
   }
 
   _upsertAccount(state, data, { importing = false } = {}) {
@@ -464,6 +464,18 @@ class Store {
     });
   }
 
+  _cancelDeliveries(state, matches) {
+    for (const entry of Object.values(state.outbox)) if (!['delivered', 'cancelled'].includes(entry.status) && matches(entry)) entry.status = 'cancelled';
+  }
+
+  // Deleted entries must also leave the visual channels, or a removed account keeps looking available.
+  _queueMessageRemoval(state, item, extra = {}) {
+    const channelId = item.freeChannelId || item.channelId;
+    const messageId = item.freeMessageId || item.messageId;
+    if (!messageId && !extra.accountId) return;
+    this._queue(state, 'delete-message', { channelId: channelId || null, messageId: messageId || null, ...extra }, `delete-message:${extra.accountId || item.id}`);
+  }
+
   async deleteEntry(guildId, type, id, actorId) {
     this._guild(guildId);
     return this._mutate(state => {
@@ -471,13 +483,24 @@ class Store {
       if (type === 'contas') {
         const account = state.accounts[id];
         if (!account) throw new Error('Conta não encontrada.');
-        if (account.status !== 'available' || account.activeSaleId || account.pendingDelivery || this._hasPending(state, id)) {
-          throw new Error('Só é possível excluir contas disponíveis, sem venda vinculada ou publicação pendente.');
+        if (account.pendingDelivery || this._hasPending(state, id)) throw new Error('A conta possui uma publicação pendente; aguarde alguns instantes e tente novamente.');
+        const sale = account.activeSaleId ? state.records.vendas[account.activeSaleId] : null;
+        if (sale?.status === 'active') throw new Error(`A conta está em uso na venda ${sale.id}, ainda ativa. Aguarde o vencimento ou exclua a venda antes.`);
+        if (sale) {
+          // The expired sale keeps its history; its pending expiration can no longer release the deleted account.
+          for (const expiration of Object.values(state.records.vencimentos)) {
+            if (expiration.saleId !== sale.id || expiration.status !== 'pending') continue;
+            expiration.status = 'cancelled'; expiration.cancelledAt = at;
+            this._publish(state, 'vencimentos', expiration);
+          }
+          sale.status = 'released'; sale.releasedAt = at;
+          this._publish(state, 'vendas', sale);
         }
         delete state.accounts[id];
-        for (const entry of Object.values(state.outbox)) if (entry.payload?.accountId === id && entry.status !== 'delivered') entry.status = 'cancelled';
-        this._audit(state, 'account.deleted', id, actorId, at, { tool: account.tool });
-        return { id, type };
+        this._cancelDeliveries(state, entry => entry.payload?.accountId === id);
+        this._queueMessageRemoval(state, account, { accountId: id, tool: account.tool });
+        this._audit(state, 'account.deleted', id, actorId, at, { tool: account.tool, saleId: sale?.id || null });
+        return { id, type, saleId: sale?.id || null };
       }
       const allowed = ['vendas', 'vencimentos', 'renovacoes', 'trocas'];
       if (!allowed.includes(type)) throw new Error('Tipo de registro inválido.');
@@ -491,7 +514,8 @@ class Store {
             delete state.records[group][related.id];
             relatedDeleted++;
             this._audit(state, 'record.deleted-cascade', related.id, actorId, at, { type: group, parentSaleId: id });
-            for (const entry of Object.values(state.outbox)) if (entry.payload?.id === related.id && entry.payload?.type === group && entry.status !== 'delivered') entry.status = 'cancelled';
+            this._cancelDeliveries(state, entry => entry.payload?.id === related.id && entry.payload?.type === group);
+            this._queueMessageRemoval(state, related);
           }
         }
         const account = state.accounts[record.accountId];
@@ -503,7 +527,8 @@ class Store {
         }
       }
       delete state.records[type][id];
-      for (const entry of Object.values(state.outbox)) if (entry.payload?.id === id && entry.payload?.type === type && entry.status !== 'delivered') entry.status = 'cancelled';
+      this._cancelDeliveries(state, entry => entry.payload?.id === id && entry.payload?.type === type);
+      this._queueMessageRemoval(state, record);
       this._audit(state, 'record.deleted', id, actorId, at, { type, tool: record.tool || null, relatedDeleted });
       return { id, type, relatedDeleted };
     });
@@ -683,6 +708,7 @@ class Store {
       getPlan(data.tool, data.plan);
       const priceCents = cents(data.priceCents, 'Preço');
       const discountCents = cents(data.discountCents ?? 0, 'Desconto');
+      if (isCreditPlan(data.tool, data.plan)) return this._creditSale(state, data, priceCents, discountCents);
       let account = data.accountId ? state.accounts[data.accountId] : this._findAccount(state, data.tool, data.login);
       if (data.accountId && !account) throw new Error('Conta não encontrada.');
       if (!account) account = this._upsertAccount(state, data);
@@ -708,11 +734,27 @@ class Store {
     });
   }
 
+  _creditSale(state, data, priceCents, discountCents) {
+    // Credits are loaded into the customer's own login: no stock account, password or expiration.
+    if (!Number.isSafeInteger(data.credits) || data.credits < 1) throw new Error('Informe a quantidade de créditos.');
+    if (data.accountId || data.password !== undefined) throw new Error('Venda de créditos não usa conta do estoque nem senha.');
+    const registeredAt = isoDate(data.registeredAt);
+    const record = { id: this._next(state, 'VEN'), type: 'vendas', guildId: this.guildId, client: data.client,
+      tool: data.tool, plan: data.plan, currentPlan: data.plan, credits: data.credits,
+      ...(data.login ? { login: requiredText(data.login, 'Login', 500) } : {}),
+      priceCents, discountCents, priceEstimated: false, registeredAt, status: 'completed', actorId: data.actorId || null };
+    state.records.vendas[record.id] = record;
+    this._publish(state, 'vendas', record);
+    this._audit(state, 'sale.created', record.id, data.actorId, registeredAt, { credits: data.credits, priceCents, discountCents });
+    return this._publicRecord(record);
+  }
+
   async renewSale(guildId, data) {
     this._guild(guildId);
     return this._mutate((state) => {
       const sale = state.records.vendas[data.saleId];
       if (!sale) throw new Error('Venda não encontrada.');
+      if (sale.credits) throw new Error('Venda de créditos não tem renovação; registre uma nova venda de créditos.');
       const account = state.accounts[sale.accountId];
       if (sale.status === 'released' || !account || account.activeSaleId !== sale.id) throw new Error('Esta venda já teve a conta liberada ou transferida.');
       const priceCents = cents(data.priceCents, 'Preço');
@@ -744,9 +786,20 @@ class Store {
     return this._mutate(state => {
       const sale = state.records.vendas[saleId];
       if (!sale) throw new Error('Venda não encontrada.');
-      const allowed = ['client', 'plan', 'priceCents', 'discountCents', 'registeredAt', 'expiresAt', 'login', 'password'];
+      const allowed = sale.credits ? ['client', 'priceCents', 'discountCents', 'registeredAt', 'login'] : ['client', 'plan', 'priceCents', 'discountCents', 'registeredAt', 'expiresAt', 'login', 'password'];
       const fields = Object.keys(changes);
-      if (!fields.length || fields.some(field => !allowed.includes(field))) throw new Error('Informe ao menos um campo válido para editar.');
+      if (!fields.length || fields.some(field => !allowed.includes(field))) throw new Error(sale.credits ? 'Em vendas de créditos é possível corrigir cliente, valor, desconto, data do registro e login.' : 'Informe ao menos um campo válido para editar.');
+      if (sale.credits) {
+        if (changes.client !== undefined) sale.client = requiredText(changes.client, 'Cliente', 100);
+        if (changes.login !== undefined) sale.login = requiredText(changes.login, 'Login', 100);
+        if (changes.registeredAt !== undefined) sale.registeredAt = isoDate(changes.registeredAt);
+        if (changes.priceCents !== undefined) sale.priceCents = cents(changes.priceCents, 'Preço');
+        if (changes.discountCents !== undefined) sale.discountCents = cents(changes.discountCents, 'Desconto');
+        sale.editedAt = isoDate(editedAt); sale.editedBy = actorId || null;
+        this._publish(state, 'vendas', sale);
+        this._audit(state, 'sale.edited', sale.id, actorId, sale.editedAt, { fields });
+        return this._publicRecord(sale);
+      }
       const account = state.accounts[sale.accountId];
       const bound = account?.activeSaleId === sale.id && account.status === 'occupied';
       const datesChanged = changes.plan !== undefined || changes.registeredAt !== undefined || changes.expiresAt !== undefined;
@@ -916,6 +969,7 @@ class Store {
     return this._mutate(state => {
       const sale = state.records.vendas[data.saleId];
       if (!sale) throw new Error('Venda não encontrada.');
+      if (sale.credits) throw new Error('Venda de créditos não possui conta do estoque para troca.');
       const oldAccount = state.accounts[sale.accountId];
       if (!oldAccount || oldAccount.activeSaleId !== sale.id || sale.status === 'released' || sale.migrationConflict) throw new Error('A venda não possui uma conta vinculada elegível para troca.');
       if ((sale.currentPlan || sale.plan) !== data.previousPlan) throw new Error('O plano anterior não corresponde ao plano atual da venda.');
@@ -966,7 +1020,7 @@ class Store {
 
   async listOutbox(guildId, { limit } = {}) {
     this._guild(guildId); await this._ready();
-    const records = Object.values(this._current().outbox).filter((entry) => entry.status !== 'delivered')
+    const records = Object.values(this._current().outbox).filter((entry) => !['delivered', 'cancelled'].includes(entry.status))
       .sort((a, b) => a.registeredAt.localeCompare(b.registeredAt));
     return structuredClone(limit === undefined ? records : records.slice(0, limit));
   }

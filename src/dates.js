@@ -2,7 +2,7 @@
 
 const TIME_ZONE = 'America/Sao_Paulo';
 const OFFSET = 3 * 60 * 60 * 1000;
-const DURATIONS = { '12 horas': { hours: 12 }, '3 dias': { days: 3 }, '1 mês': { months: 1 }, '3 meses': { months: 3 }, '12 meses': { months: 12 } };
+const DURATIONS = { '12 horas': { hours: 12 }, '3 dias': { days: 3 }, '1 mês': { months: 1 }, '3 meses': { months: 3 }, '6 meses': { months: 6 }, '12 meses': { months: 12 } };
 
 function formatBR(value) {
   const date = value instanceof Date ? value : new Date(value);

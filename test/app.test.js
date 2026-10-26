@@ -304,7 +304,8 @@ test('autocomplete mostra preço apenas dos planos da ferramenta e bloqueia aces
 
   const borneo = interaction('vender', { ferramenta: 'Borneo Schematics' }, { autocomplete: true });
   await app.handle(borneo);
-  assert.deepEqual(borneo.choices.map(choice => choice.value), ['3 dias', '1 mês']);
+  assert.deepEqual(borneo.choices.map(choice => choice.value), ['3 dias', '1 mês', 'Créditos']);
+  assert.match(borneo.choices[2].name, /5,00 por crédito/);
   assert.match(borneo.choices[1].name, /50,00/);
   assert.match(borneo.choices[0].name, /30,00/);
 

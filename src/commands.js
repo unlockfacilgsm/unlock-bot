@@ -64,8 +64,11 @@ function sale(name) {
   string(builder, 'cliente', 'Nome ou contato do cliente', true);
   tool(builder, true);
   plan(builder);
+  builder.addIntegerOption(option => option.setName('creditos')
+    .setDescription('Quantidade de créditos; obrigatória no plano Créditos (R$ 5,00 cada)')
+    .setMinValue(1).setMaxValue(100000));
   string(builder, 'conta', 'ID ACC da conta disponível; alternativa a login e senha', false, 64);
-  string(builder, 'login', 'Login manual; preencha também senha e omita conta', false);
+  string(builder, 'login', 'Login manual; preencha também senha e omita conta. Em créditos, login do cliente', false);
   string(builder, 'senha', 'Senha exata da conta manual', false, 200);
   money(builder);
   string(builder, 'data', 'Data DD/MM/AAAA; omitida usa a data atual', false, 10, 10);
@@ -97,6 +100,12 @@ function buildCommands() {
           { name: 'Em uso', value: 'em-uso' },
           { name: 'Aguardando troca de senha', value: 'aguardando-senha' }
         ));
+      return subcommand;
+    })
+    .addSubcommand(subcommand => {
+      subcommand.setName('excluir').setDescription('Remove contas do estoque e apaga a publicação delas; restrito à administração');
+      string(subcommand, 'contas', 'IDs ACC separados por vírgula, ex.: ACC-001,ACC-002; máximo de 50', true, 1000);
+      subcommand.addBooleanOption(option => option.setName('confirmar').setDescription('Confirma a exclusão permanente').setRequired(true));
       return subcommand;
     })
     .addSubcommand(subcommand => {

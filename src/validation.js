@@ -29,9 +29,14 @@ function cents(value, label) {
   return Math.round(value * 100);
 }
 
-function amounts(tool, plan, value, discount) {
+function credits(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 100_000) throw new Error('Quantidade de créditos inválida: informe um número inteiro de 1 a 100000.');
+  return value;
+}
+
+function amounts(tool, plan, value, discount, quantity = 1) {
   const definition = getPlan(tool, plan);
-  const gross = value == null ? definition.priceCents : cents(value, 'Valor');
+  const gross = value == null ? definition.priceCents * (definition.perCredit ? credits(quantity) : 1) : cents(value, 'Valor');
   const discountCents = discount == null ? 0 : cents(discount, 'Desconto');
   if (discountCents > gross) throw new Error('O desconto não pode superar o valor da venda.');
   return { priceCents: gross - discountCents, discountCents };
@@ -41,4 +46,4 @@ function confirmed(value) {
   if (value !== true) throw new Error('Confirme a troca da senha na ferramenta externa antes de registrar a alteração.');
 }
 
-module.exports = { text, password, id, cents, amounts, confirmed };
+module.exports = { text, password, id, cents, credits, amounts, confirmed };

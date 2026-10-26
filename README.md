@@ -32,6 +32,7 @@ Após criar a estrutura, copie o ID do canal privado `dados-bot` para `DISCORD_D
 | 🛠️ TSM Tool | 12 horas — R$ 20,00; 1 mês — R$ 40,00 |
 | ⚙️ AMT Tool | 12 horas — R$ 20,00; 1 mês — R$ 40,00 |
 | 🔩 TFM Tool | 12 horas — R$ 20,00; 1 mês — R$ 40,00 |
+| Todas as ferramentas | Créditos — R$ 5,00 por crédito |
 
 O catálogo fica em `src/catalog.js`. A sugestão de planos mostra apenas os válidos para a ferramenta, com seu preço. Alterar a tabela afeta novas operações; cada venda e renovação preserva o valor registrado na ocasião. O painel apresenta todos os dias com vendas/renovações existentes no histórico. Use `/vendas-mes mes:<1–12> ano:<AAAA>` para ver o mês inteiro, dia a dia, incluindo dias sem vendas.
 
@@ -58,6 +59,8 @@ Use `npm run doctor` para consultar o acesso do bot, os cargos e as permissões 
 1. Cadastre o estoque com `/conta adicionar ferramenta:<ferramenta> login:<login> senha:<senha>`.
 2. Consulte `/estoque` ou `/conta listar`, com filtros opcionais de ferramenta e situação.
 3. Venda com `/vender cliente:<cliente> ferramenta:<ferramenta> plano:<plano> conta:<ACC-...>`.
+
+**Créditos:** `/vender cliente:<cliente> ferramenta:<ferramenta> plano:Créditos creditos:<quantidade>` registra R$ 5,00 por crédito (por exemplo, `creditos:10` = R$ 50,00). `login` é opcional e serve para anotar a conta do cliente que recebeu os créditos; `conta` e `senha` não são aceitos. A venda de créditos não reserva conta do estoque, não tem vencimento, não pode ser renovada nem trocada, e entra no painel e no `/vendas-mes` como as demais vendas. `valor` e `desconto` funcionam como nas outras vendas (valor = total antes do desconto).
 
 `/vender` é o único comando de venda; `/venda` foi removido. Se a conta ainda não estiver no estoque, use `login` e `senha` juntos, omitindo `conta`. As alternativas são exclusivas. A conta fica reservada à venda e um login ocupado não pode ser vendido novamente para a mesma ferramenta.
 
@@ -105,7 +108,9 @@ Senhas são preservadas exatamente, incluindo símbolos e espaços. Evite enviar
 | `/auditoria quantidade:100` | Mostra ações e responsáveis; exclusivo de administradores |
 | `/exportar tipo:<tipo> inicio:<DD/MM/AAAA> fim:<DD/MM/AAAA>` | Envia CSV de registros sem senhas; todos os filtros são opcionais |
 
-`/excluir tipo:<tipo> id:<ID> confirmar:true` permite que administradores excluam uma conta ou registro. A exclusão é permanente e auditada; contas ocupadas/pendentes são protegidas; ao excluir uma venda, seus vencimentos, renovações e trocas vinculados também são removidos e contabilizados na auditoria. Os tipos são `vendas`, `renovacoes`, `trocas`, `vencimentos` e `contas`. Respostas longas são paginadas para respeitar os limites do Discord. Exportações podem conter logins e contatos; mantenha os arquivos nas mãos das pessoas autorizadas.
+Para tirar contas do estoque, use `/conta excluir contas:ACC-001,ACC-002 confirmar:true` (até 50 IDs; exclusivo da administração). Cada conta é processada separadamente e a resposta mostra o resultado de cada uma. A mensagem da conta no canal da ferramenta (com o anexo de credenciais) também é apagada. Podem ser excluídas contas disponíveis, contas aguardando troca de senha após `/troca` e contas de vendas já vencidas; nesse último caso o vencimento pendente é encerrado e a venda fica como liberada, preservando o histórico. Contas de vendas ainda ativas são protegidas.
+
+`/excluir tipo:<tipo> id:<ID> confirmar:true` permite que administradores excluam uma conta ou registro. A exclusão é permanente e auditada, e a mensagem do registro no canal também é apagada; contas em vendas ativas ou com publicação pendente são protegidas; ao excluir uma venda, seus vencimentos, renovações e trocas vinculados também são removidos e contabilizados na auditoria. Os tipos são `vendas`, `renovacoes`, `trocas`, `vencimentos` e `contas`. Respostas longas são paginadas para respeitar os limites do Discord. Exportações podem conter logins e contatos; mantenha os arquivos nas mãos das pessoas autorizadas.
 
 Para avisos antecipados, use `/alertas habilitado:true antecedencia:1440` para avisar com um dia de antecedência. O intervalo aceito é de 1 a 43.200 minutos. `/alertas habilitado:false` desativa; sem opções, consulta a configuração. O bot precisa estar conectado para enviar avisos.
 

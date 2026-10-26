@@ -33,6 +33,7 @@ function fixture(clock = () => new Date()) {
         if (payload.enforceNonce && nonces.has(payload.nonce)) return nonces.get(payload.nonce);
         const id = String(++nextId);
         const message = { id, channelId: result.id, author: client.user, content: payload.content || '', createdTimestamp: Date.now(), createdAt: new Date(), url: `https://discord.com/channels/${guild.id}/${result.id}/${id}`, attachments: new Map(),
+          async delete() { history.delete(id); },
           async edit(update) {
             if (update.content != null) { assert.ok(update.content.length <= 2000); message.content = update.content; }
             if (update.attachments) message.attachments.clear();
@@ -62,8 +63,8 @@ function fixture(clock = () => new Date()) {
   return { client, guild, store, data, downloads };
 }
 
-function interaction(guild, commandName, values = {}, subcommand) {
-  return { guild, channelId: 'panel', commandName, user: { id: 'seller-user' }, member: { roles: ['seller'] }, memberPermissions: { has: () => false }, deferred: false,
+function interaction(guild, commandName, values = {}, subcommand, roles = ['seller']) {
+  return { guild, channelId: 'panel', commandName, user: { id: 'seller-user' }, member: { roles }, memberPermissions: { has: () => false }, deferred: false,
     isChatInputCommand: () => true, isAutocomplete: () => false,
     options: { getString: name => values[name] ?? null, getNumber: name => values[name] ?? null, getBoolean: name => values[name] ?? null, getInteger: name => values[name] ?? null, getSubcommand: () => subcommand },
     async deferReply() { this.deferred = true; }, async editReply(reply) { this.output = reply; }, async fetchReply() { return { createMessageComponentCollector: () => ({ on() {} }) }; }

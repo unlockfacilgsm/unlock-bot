@@ -108,7 +108,7 @@ function csvCell(value) {
 }
 
 function exportCsv(records) {
-  const fields = ['id', 'type', 'client', 'tool', 'plan', 'login', 'status', 'priceCents', 'discountCents', 'priceEstimated', 'priceUnknown', 'registeredAt', 'expiresAt', 'actorId'];
+  const fields = ['id', 'type', 'client', 'tool', 'plan', 'credits', 'login', 'status', 'priceCents', 'discountCents', 'priceEstimated', 'priceUnknown', 'registeredAt', 'expiresAt', 'actorId'];
   return Buffer.from('\uFEFF' + [fields.map(csvCell).join(';'), ...records.map(record => fields.map(field => csvCell(record[field])).join(';'))].join('\r\n'), 'utf8');
 }
 

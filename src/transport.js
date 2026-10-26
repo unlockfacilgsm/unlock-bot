@@ -23,7 +23,13 @@ function recordPages(record, marker) {
   const content = block.slice(RECORD_SEPARATOR.length + 1, -(RECORD_SEPARATOR.length + 1));
   return splitText(content, 1750).map((page, index) => recordBlock(`${page}${marker ? `\n${marker}${index ? `:${index}` : ''}` : ''}`));
 }
-const DATA_PERMISSIONS = [P.ViewChannel, P.ReadMessageHistory, P.SendMessages, P.AttachFiles];
+/** Account ID of a free-account post written by DiscordTransport.flushOnce, or null. */
+function postedAccountId(content) {
+  const body = String(content || '');
+  const title = body.startsWith(`${RECORD_SEPARATOR}\n`) ? body.slice(RECORD_SEPARATOR.length + 1) : body;
+  return /^\*\*CONTA (ACC-[A-Z0-9-]+) — /.exec(title)?.[1] || null;
+}
+const DATA_PERMISSIONS =[P.ViewChannel, P.ReadMessageHistory, P.SendMessages, P.AttachFiles];
 const SETUP_PERMISSIONS = [P.ManageChannels, P.ManageRoles, ...DATA_PERMISSIONS, P.EmbedLinks];
 const PERMISSION_NAMES = new Map([
   [P.ManageChannels, 'Gerenciar Canais'], [P.ManageRoles, 'Gerenciar Cargos'],
@@ -166,7 +172,8 @@ function renderRecord(record) {
   if (record.saleId) lines.push(`Venda: ${safe(record.saleId)}`);
   if (record.accountId) lines.push(`Conta: ${safe(record.accountId)}`);
   if (record.login) lines.push(`Login: ${safe(record.login)}`);
-  if (record.type === 'vendas' || (record.type === 'trocas' && record.newPlan)) lines.push(`Senha: ${record.password !== undefined ? safe(record.password) : 'não disponível no histórico'}`);
+  if (record.credits) lines.push(`Créditos: ${safe(record.credits)}`);
+  else if (record.type === 'vendas' || (record.type === 'trocas' && record.newPlan)) lines.push(`Senha: ${record.password !== undefined ? safe(record.password) : 'não disponível no histórico'}`);
   if (record.previousPlan) lines.push(`Plano anterior: ${safe(record.previousPlan)}`);
   if (record.newPlan) lines.push(`Plano novo: ${safe(record.newPlan)}`);
   if (record.plan) lines.push(`Plano original: ${safe(record.plan)}`);
@@ -374,8 +381,8 @@ class DiscordTransport {
     const content = [
       '**UNLOCK FÁCIL — COMANDOS**',
       'Use o canal de painel. Consultas e credenciais exibidas por comando são privadas.',
-      '`/conta` cadastra uma conta no estoque; `/estoque` consulta contas por ferramenta e estado.',
-      '`/vender` reserva uma conta livre, registra o valor cobrado e calcula o vencimento.',
+      '`/conta adicionar` cadastra uma conta no estoque; `/conta excluir` (administração) remove contas e apaga a publicação; `/estoque` consulta contas por ferramenta e estado.',
+      '`/vender` reserva uma conta livre, registra o valor cobrado e calcula o vencimento. No plano Créditos, informe `creditos` (R$ 5,00 cada); não reserva conta nem vence.',
       '`/renovar venda:VEN-...` registra uma nova receita e mantém os valores anteriores.',
       '`/editar-venda venda:VEN-...` corrige os campos informados, mantendo o ID.',
       '`/troca venda:VEN-... plano_anterior:... plano_novo:... login:... senha:...` substitui a conta da venda.',
@@ -469,6 +476,9 @@ class DiscordTransport {
           const content = [`**CONTA ${safe(account.id)} — ${available ? 'DISPONÍVEL' : 'OCUPADA'}**`, `Ferramenta: ${safe(account.tool)}`, `Login: ${safe(account.login)}`, available ? 'Credenciais confirmadas no arquivo privado abaixo.' : `Venda atual: ${safe(account.activeSaleId)}`].join('\n');
           const files = available ? [{ attachment: Buffer.from(JSON.stringify({ accountId: account.id, tool: account.tool, login: account.login, password: account.password }, null, 2)), name: `credenciais-${account.id}.json` }] : [];
           published = await this.publish(channel, item, content, { messageId: account.freeMessageId, files, clearFiles: true, cache });
+        } else if (item.kind === 'delete-message') {
+          await this.removeMessages(guild, item.payload, cache);
+          await this.store.completeOutbox(item.id, {}); skipped = true; return;
         } else if (item.kind === 'reminder') {
           const sale = await this.store.getRecord(guild.id, 'vendas', item.payload.saleId);
           const account = sale?.accountId ? await this.store.getAccount(guild.id, sale.accountId) : null;
@@ -492,6 +502,52 @@ class DiscordTransport {
       }
     }
     return result;
+  }
+
+  async accountMessages(channel, accountId, cache) {
+    if (!cache.has(channel.id)) cache.set(channel.id, await fetchAllMessages(channel));
+    return cache.get(channel.id).filter(message => message.author?.id === this.client.user.id && postedAccountId(message.content) === accountId);
+  }
+
+  async removeMessages(guild, { channelId, messageId, accountId, tool }, cache = new Map()) {
+    const targets = new Map();
+    const channel = await channelById(guild, channelId);
+    if (channel && messageId) {
+      try {
+        const message = await channel.messages.fetch(messageId);
+        if (message?.author?.id === this.client.user.id) targets.set(message.id, message);
+      } catch (error) { if (error.code !== 10008 && error.status !== 404) throw error; }
+    }
+    // Older publications may lack a mapped ID or have a duplicate: find them by the account title.
+    const toolChannel = accountId && this.catalog[tool] ? await this.getChannel(guild, this.catalog[tool].channelKey) : null;
+    if (toolChannel) for (const message of await this.accountMessages(toolChannel, accountId, cache)) targets.set(message.id, message);
+    for (const message of targets.values()) {
+      try { await message.delete(); }
+      catch (error) { if (error.code !== 10008 && error.status !== 404) throw error; }
+      for (const messages of cache.values()) {
+        const index = messages.indexOf(message);
+        if (index >= 0) messages.splice(index, 1);
+      }
+    }
+    return targets.size;
+  }
+
+  /** Removes free-account posts left by accounts that no longer exist in the store. */
+  async purgeOrphanAccounts(guild) {
+    const existing = new Set((await this.store.listAccounts(guild.id)).map(account => account.id));
+    if (!existing.size) return 0;
+    let removed = 0;
+    for (const spec of Object.values(this.catalog)) {
+      const channel = await this.getChannel(guild, spec.channelKey);
+      if (!channel?.messages) continue;
+      for (const message of await fetchAllMessages(channel)) {
+        const accountId = postedAccountId(message.content);
+        if (message.author?.id !== this.client.user.id || !accountId || existing.has(accountId)) continue;
+        try { await message.delete(); removed++; }
+        catch (error) { if (error.code !== 10008 && error.status !== 404) throw error; }
+      }
+    }
+    return removed;
   }
 
   async reminders(guild) {

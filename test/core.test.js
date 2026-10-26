@@ -8,7 +8,7 @@ const validation = require('../src/validation');
 const { summarize, dashboardText, monthlySalesText, exportCsv } = require('../src/reporting');
 
 test('catalog has the updated monthly plans and Borneo price, preserving TFM', () => {
-  const expected = { 'Unlock Tool': { '12 horas': 1000, '1 mês': 3000, '3 meses': 6000, '6 meses': 9000 }, 'Borneo Schematics': { '3 dias': 3000, '1 mês': 5000 }, 'TSM Tool': { '12 horas': 2000, '1 mês': 4000 }, 'AMT Tool': { '12 horas': 2000, '1 mês': 4000 }, 'TFM Tool': { '12 horas': 2000, '1 mês': 4000 } };
+  const expected = { 'Unlock Tool': { '12 horas': 1000, '1 mês': 3000, '3 meses': 6000, '6 meses': 9000, 'Créditos': 500 }, 'Borneo Schematics': { '3 dias': 3000, '1 mês': 5000, 'Créditos': 500 }, 'TSM Tool': { '12 horas': 2000, '1 mês': 4000, 'Créditos': 500 }, 'AMT Tool': { '12 horas': 2000, '1 mês': 4000, 'Créditos': 500 }, 'TFM Tool': { '12 horas': 2000, '1 mês': 4000, 'Créditos': 500 } };
   for (const [tool, plans] of Object.entries(expected)) {
     assert.deepEqual(Object.fromEntries(Object.entries(TOOLS[tool].plans).map(([plan, value]) => [plan, value.priceCents])), plans);
     assert.deepEqual(planChoices(tool).map(choice => choice.value), Object.keys(plans));
