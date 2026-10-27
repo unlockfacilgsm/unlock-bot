@@ -442,3 +442,59 @@ test('ad expenses can be registered for past dates, edited, sorted and recovered
   await assert.rejects(store.createAdExpense(GUILD, { amountCents: 100, date: '2026-02-30' }), /Data inválida/);
   await assert.rejects(store.updateAdExpense(GUILD, { id: old.id }), /pelo menos um campo/);
 });
+
+test('an expiration lists every account swap of its purchase, in order', async () => {
+  const { renderRecord } = require('../src/transport');
+  const fixture = discordFixture(); const store = fixture.store(); await store.load();
+  const sale = await store.createSale(GUILD, saleData({ plan: '1 mês' }));
+  const stock = await store.upsertAccount(GUILD, { tool: 'Unlock Tool', login: 'stock-login', password: 'stock-pass' });
+  const swap = (registeredAt, extra) => store.replaceSaleAccount(GUILD, { saleId: sale.id, registeredAt, ...extra });
+  await swap('2090-01-05T12:00:00.000Z', { login: 'second', password: 'p2' });
+  await swap('2090-01-10T12:00:00.000Z', { accountId: stock.id });
+  const third = await swap('2090-01-15T12:00:00.000Z', { login: 'fourth', password: 'p4' });
+  const current = await store.getRecord(GUILD, 'vendas', sale.id);
+  assert.equal(current.expiresAt, '2090-02-01T15:00:00.000Z', 'swaps without a new plan keep the deadline');
+  assert.equal(third.previousPlan, '1 mês'); assert.equal(third.newPlan, '1 mês');
+  assert.equal((await store.getDisplayRecord(GUILD, 'vendas', sale.id)).password, 'p4');
+  const [expiration] = await store.expireSales(GUILD, '2090-02-02T10:00:00.000Z');
+  assert.deepEqual(expiration.trades.map(trade => [trade.id, trade.previousLogin, trade.login]), [
+    ['TRC-001', 'login-1', 'second'], ['TRC-002', 'second', 'stock-login'], ['TRC-003', 'stock-login', 'fourth']]);
+  const text = renderRecord(await store.getDisplayRecord(GUILD, 'vencimentos', expiration.id));
+  assert.match(text, /Contas trocadas nesta compra: 3/);
+  assert.match(text, /TRC-002 — .* — second \(ACC-003\) → stock-login \(ACC-002\)/);
+  assert.ok(!text.includes('p2') && !text.includes('stock-pass'), 'no passwords in the history');
+});
+
+test('swaps of an earlier, expired purchase do not appear in the next expiration', async () => {
+  const fixture = discordFixture(); const store = fixture.store(); await store.load();
+  const sale = await store.createSale(GUILD, saleData({ plan: '1 mês' }));
+  await store.replaceSaleAccount(GUILD, { saleId: sale.id, login: 'old-period', password: 'x', registeredAt: '2090-01-05T12:00:00.000Z' });
+  const [first] = await store.expireSales(GUILD, '2090-02-02T10:00:00.000Z');
+  assert.equal(first.trades.length, 1);
+  // The customer buys one more month after the expiry.
+  await store.renewSale(GUILD, { saleId: sale.id, plan: '1 mês', priceCents: 3000, registeredAt: '2090-02-03T12:00:00.000Z' });
+  const [second] = await store.expireSales(GUILD, '2090-03-04T10:00:00.000Z');
+  assert.equal(second.trades, undefined, 'the previous purchase swap is not repeated');
+  await store.renewSale(GUILD, { saleId: sale.id, plan: '1 mês', priceCents: 3000, registeredAt: '2090-03-05T12:00:00.000Z' });
+  await store.replaceSaleAccount(GUILD, { saleId: sale.id, login: 'new-period', password: 'y', registeredAt: '2090-03-10T12:00:00.000Z' });
+  const [third] = await store.expireSales(GUILD, '2090-04-06T10:00:00.000Z');
+  assert.deepEqual(third.trades.map(trade => trade.login), ['new-period']);
+});
+
+test('replacement by stock account validates ownership and availability; a new plan restarts the period', async () => {
+  const fixture = discordFixture(); const store = fixture.store(); await store.load();
+  const sale = await store.createSale(GUILD, saleData());
+  const other = await store.upsertAccount(GUILD, { tool: 'TSM Tool', login: 'tsm', password: 'p' });
+  await assert.rejects(store.replaceSaleAccount(GUILD, { saleId: sale.id, accountId: other.id }), /outra ferramenta/);
+  await assert.rejects(store.replaceSaleAccount(GUILD, { saleId: sale.id, accountId: 'ACC-999' }), /não encontrada/);
+  await assert.rejects(store.replaceSaleAccount(GUILD, { saleId: sale.id, accountId: sale.accountId }), /outra conta/);
+  const busy = await store.createSale(GUILD, saleData({ login: 'busy' }));
+  await assert.rejects(store.replaceSaleAccount(GUILD, { saleId: sale.id, accountId: busy.accountId }), /ocupada/);
+  const free = await store.upsertAccount(GUILD, { tool: 'Unlock Tool', login: 'free', password: 'free-pass' });
+  const trade = await store.replaceSaleAccount(GUILD, { saleId: sale.id, accountId: free.id, newPlan: '1 mês', registeredAt: '2090-01-02T15:00:00.000Z' });
+  assert.equal(trade.expiresAt, '2090-02-02T15:00:00.000Z');
+  assert.equal((await store.getDisplayRecord(GUILD, 'trocas', trade.id)).password, 'free-pass');
+  const corrected = await store.replaceSaleAccount(GUILD, { saleId: sale.id, login: 'manual', password: 'm', expiresAt: '2090-03-01T15:00:00.000Z', registeredAt: '2090-01-03T15:00:00.000Z' });
+  assert.equal(corrected.expiresAt, '2090-03-01T15:00:00.000Z');
+  await assert.rejects(store.replaceSaleAccount(GUILD, { saleId: sale.id, login: 'again', password: 'a', expiresAt: '2089-01-01T00:00:00.000Z' }), /preceder/);
+});

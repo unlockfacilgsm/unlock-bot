@@ -25,8 +25,10 @@ test('sale editing and replacement expose optional corrections and required plan
   assert.equal(option(edit, 'venda').required, true);
   assert.equal(option(edit, 'plano').required, false);
   const trade = named('troca');
-  for (const name of ['venda', 'plano_anterior', 'plano_novo', 'login', 'senha']) assert.equal(option(trade, name).required, true);
+  assert.equal(option(trade, 'venda').required, true);
+  for (const name of ['conta', 'login', 'senha', 'plano_novo', 'vencimento', 'hora_vencimento', 'motivo', 'observacao']) assert.equal(option(trade, name).required, false);
   assert.equal(option(trade, 'plano_novo').autocomplete, true);
+  assert.ok(!trade.options.some(item => item.name === 'plano_anterior'));
   assert.ok(!trade.options.some(item => ['cliente', 'ferramenta'].includes(item.name)));
 });
 

@@ -184,6 +184,11 @@ function renderRecord(record) {
   if (record.registeredAt) lines.push(`Registrado: ${dateBR(record.registeredAt)}`);
   if (record.expiresAt) lines.push(`Vencimento: ${dateBR(record.expiresAt)}`);
   if (record.status) lines.push(`Estado: ${safe(record.status)}`);
+  if (record.type === 'vencimentos' && record.trades?.length) {
+    lines.push(`Contas trocadas nesta compra: ${record.trades.length}`);
+    const account = (id, login) => `${safe(login)}${id ? ` (${safe(id)})` : ''}`;
+    for (const trade of record.trades) lines.push(`• ${safe(trade.id)} — ${dateBR(trade.registeredAt)} — ${account(trade.previousAccountId, trade.previousLogin)} → ${account(trade.accountId, trade.login)}`);
+  }
   if (record.reason) lines.push(`Motivo: ${safe(record.reason)}`);
   if (record.observation) lines.push(`Observação: ${safe(record.observation)}`);
   if (record.actorId) lines.push(`Responsável: ${safe(record.actorId)}`);
@@ -385,7 +390,7 @@ class DiscordTransport {
       '`/vender` reserva uma conta livre, registra o valor cobrado e calcula o vencimento. No plano Créditos, informe `creditos` (R$ 5,00 cada); não reserva conta nem vence.',
       '`/renovar venda:VEN-...` registra uma nova receita e mantém os valores anteriores.',
       '`/editar-venda venda:VEN-...` corrige os campos informados, mantendo o ID.',
-      '`/troca venda:VEN-... plano_anterior:... plano_novo:... login:... senha:...` substitui a conta da venda.',
+      '`/troca venda:VEN-...` substitui a conta da venda: informe `conta:ACC-...` do estoque ou `login` e `senha`; `plano_novo` e `vencimento` são opcionais. O vencimento lista as contas trocadas na compra.',
       '`/vencidas` mostra as contas que aguardam troca externa; `/vencimentos-proximos` consulta próximas datas.',
       '`/troca-senha` e `/trocar-senhas` registram a senha nova SOMENTE após confirmar que a troca foi realizada na ferramenta externa.',
       'O bot não altera senhas nas ferramentas externas. A conta só volta ao estoque após a confirmação e a publicação das credenciais.',

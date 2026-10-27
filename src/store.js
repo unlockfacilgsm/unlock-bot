@@ -841,6 +841,18 @@ class Store {
     });
   }
 
+  /** Account swaps of the purchase that is expiring: since the sale or its latest renewal, never older ones. */
+  _periodTrades(state, sale) {
+    const starts = [sale.registeredAt, ...Object.values(state.records.renovacoes)
+      .filter(renewal => renewal.saleId === sale.id && renewal.registeredAt <= sale.expiresAt).map(renewal => renewal.registeredAt)];
+    const periodStart = starts.sort().at(-1);
+    return Object.values(state.records.trocas)
+      .filter(trade => trade.saleId === sale.id && trade.registeredAt >= periodStart && trade.registeredAt <= sale.expiresAt)
+      .sort((a, b) => a.registeredAt.localeCompare(b.registeredAt) || a.id.localeCompare(b.id, undefined, { numeric: true }))
+      .map(trade => ({ id: trade.id, registeredAt: trade.registeredAt, previousAccountId: trade.previousAccountId || null,
+        previousLogin: trade.previousLogin || null, accountId: trade.accountId || null, login: trade.login || null }));
+  }
+
   async expireSales(guildId, nowISO = new Date().toISOString()) {
     this._guild(guildId);
     return this._mutate((state) => {
@@ -854,6 +866,8 @@ class Store {
         const expiration = { id: this._next(state, 'VENC'), type: 'vencimentos', guildId: this.guildId,
           saleId: sale.id, client: sale.client, tool: sale.tool, login: sale.login, accountId: sale.accountId,
           expiresAt: sale.expiresAt, registeredAt: now, status: 'pending' };
+        const trades = this._periodTrades(state, sale);
+        if (trades.length) expiration.trades = trades;
         state.records.vencimentos[expiration.id] = expiration;
         this._publish(state, 'vendas', sale); this._publish(state, 'vencimentos', expiration);
         this._audit(state, 'sale.expired', expiration.id, null, now, { saleId: sale.id });
@@ -972,30 +986,44 @@ class Store {
       if (sale.credits) throw new Error('Venda de créditos não possui conta do estoque para troca.');
       const oldAccount = state.accounts[sale.accountId];
       if (!oldAccount || oldAccount.activeSaleId !== sale.id || sale.status === 'released' || sale.migrationConflict) throw new Error('A venda não possui uma conta vinculada elegível para troca.');
-      if ((sale.currentPlan || sale.plan) !== data.previousPlan) throw new Error('O plano anterior não corresponde ao plano atual da venda.');
-      getPlan(sale.tool, data.newPlan);
-      requiredText(data.login, 'Login', 100); validatePassword(data.password);
+      const previousPlan = sale.currentPlan || sale.plan;
+      if (data.previousPlan !== undefined && previousPlan !== data.previousPlan) throw new Error('O plano anterior não corresponde ao plano atual da venda.');
+      const newPlan = data.newPlan ?? previousPlan;
+      if (data.newPlan !== undefined) getPlan(sale.tool, data.newPlan);
       if (oldAccount.pendingDelivery || this._hasPending(state, oldAccount.id)) throw new Error('A conta possui entrega pendente; aguarde a publicação.');
-      let account = this._findAccount(state, sale.tool, data.login);
+      let account, password;
+      if (data.accountId) {
+        // A stock account carries its own confirmed credentials.
+        account = state.accounts[data.accountId];
+        if (!account) throw new Error('Conta não encontrada.');
+        if (account.tool !== sale.tool) throw new Error('A conta pertence a outra ferramenta.');
+        password = this._password(account);
+      } else {
+        requiredText(data.login, 'Login', 100); password = validatePassword(data.password);
+        account = this._findAccount(state, sale.tool, data.login);
+        if (account && this._password(account) !== password && account.id !== oldAccount.id) throw new Error('A senha informada difere do estoque; atualize a conta antes da troca.');
+      }
       if (account?.id === oldAccount.id) throw new Error('Informe outra conta para substituir a atual; para corrigir credenciais use /editar-venda.');
       if (account && (account.status !== 'available' || account.activeSaleId || account.pendingDelivery || this._hasPending(state, account.id))) throw new Error('A nova conta está ocupada ou possui entrega pendente.');
-      if (account && this._password(account) !== data.password) throw new Error('A senha informada difere do estoque; atualize a conta antes da troca.');
-      if (!account) account = this._upsertAccount(state, { tool: sale.tool, login: data.login, password: data.password });
+      if (!account) account = this._upsertAccount(state, { tool: sale.tool, login: data.login, password });
       const registeredAt = isoDate(data.registeredAt);
       const record = { id: this._next(state, 'TRC'), type: 'trocas', guildId: this.guildId, saleId: sale.id,
-        client: sale.client, tool: sale.tool, previousPlan: data.previousPlan, newPlan: data.newPlan,
+        client: sale.client, tool: sale.tool, previousPlan, newPlan,
         previousAccountId: oldAccount.id, accountId: account.id, login: account.login,
         reason: data.reason || '', observation: data.observation || '', registeredAt, actorId: data.actorId || null };
-      record.passwordEncrypted = encryptString(data.password, this.key, `trade:${this.guildId}:${record.id}`);
+      record.passwordEncrypted = encryptString(password, this.key, `trade:${this.guildId}:${record.id}`);
       record.previousLogin = sale.login;
       const previousPassword = this._salePassword(state, sale);
       if (previousPassword !== undefined) record.previousPasswordEncrypted = encryptString(previousPassword, this.key, `trade-previous:${this.guildId}:${record.id}`);
       oldAccount.activeSaleId = null; oldAccount.needsPasswordReset = true; oldAccount.status = 'occupied';
       account.activeSaleId = sale.id; account.status = 'occupied'; account.updatedAt = registeredAt;
-      sale.accountId = account.id; sale.login = account.login; sale.currentPlan = data.newPlan;
-      sale.passwordEncrypted = encryptString(data.password, this.key, `sale:${this.guildId}:${sale.id}`);
-      // The replacement period starts at the recorded swap, without adding revenue.
-      sale.expiresAt = calculateExpiration(data.newPlan, new Date(registeredAt)).toISOString();
+      sale.accountId = account.id; sale.login = account.login; sale.currentPlan = newPlan;
+      sale.passwordEncrypted = encryptString(password, this.key, `sale:${this.guildId}:${sale.id}`);
+      // A new plan restarts the period at the recorded swap, without adding revenue; otherwise the deadline is kept.
+      if (data.expiresAt !== undefined) sale.expiresAt = isoDate(data.expiresAt);
+      else if (data.newPlan !== undefined) sale.expiresAt = calculateExpiration(newPlan, new Date(registeredAt)).toISOString();
+      if (Date.parse(sale.expiresAt) < Date.parse(sale.registeredAt)) throw new Error('O vencimento não pode preceder o registro da venda.');
+      record.expiresAt = sale.expiresAt;
       sale.status = Date.parse(sale.expiresAt) <= Date.now() ? 'expired' : 'active';
       for (const expiration of Object.values(state.records.vencimentos)) {
         if (expiration.saleId === sale.id && expiration.status === 'pending') {

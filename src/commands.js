@@ -135,12 +135,14 @@ function buildCommands() {
   string(edit, 'login', 'Corrigir login da conta vinculada');
   string(edit, 'senha', 'Corrigir senha exata da conta vinculada', false, 200);
 
-  const replacement = command('troca', 'Substitui a conta da venda e registra os planos anterior e novo');
+  const replacement = command('troca', 'Troca a conta da venda; preencha só o que muda, mantendo o ID da venda');
   string(replacement, 'venda', 'ID VEN da venda cuja conta será substituída', true, 64);
-  plan(replacement, 'plano_anterior');
-  plan(replacement, 'plano_novo');
-  string(replacement, 'login', 'Login da conta que será colocada na venda', true);
-  string(replacement, 'senha', 'Senha exata da nova conta', true, 200);
+  string(replacement, 'conta', 'ID ACC da nova conta no estoque; alternativa a login e senha', false, 64);
+  string(replacement, 'login', 'Login da nova conta; preencha também senha e omita conta');
+  string(replacement, 'senha', 'Senha exata da nova conta', false, 200);
+  plan(replacement, 'plano_novo', false);
+  string(replacement, 'vencimento', 'Novo vencimento DD/MM/AAAA; omitido mantém o atual ou usa o plano novo', false, 10, 10);
+  string(replacement, 'hora_vencimento', 'Hora do novo vencimento HH:MM', false, 5, 5);
   string(replacement, 'motivo', 'Motivo da troca', false, 300);
   string(replacement, 'observacao', 'Observação adicional', false, 500);
 

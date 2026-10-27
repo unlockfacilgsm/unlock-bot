@@ -155,10 +155,10 @@ test('/vencidas delivers exact combolist credentials privately with the existing
   await app.handle(request);
   assert.equal(request.deferPayload.flags, MessageFlags.Ephemeral);
   assert.equal(request.replies[0].files[0].name, 'vencidas.txt');
-  assert.equal(request.replies[0].files[0].attachment.toString('utf8'), 'AMT Tool:\none@example.com:  $&`*:senha  \ntwo:á123');
+  assert.equal(request.replies[0].files[0].attachment.toString('utf8'), 'AMT Tool:\none@example.com:  $&`*:senha  \ntwo:á123\n\nVENC-001,VENC-002');
   const all = interaction('vencidas');
   await app.handle(all);
-  assert.equal(all.replies[0].files[0].attachment.toString('utf8'), 'AMT Tool:\none@example.com:  $&`*:senha  \ntwo:á123\n\nTSM Tool:\nother:other-password');
+  assert.equal(all.replies[0].files[0].attachment.toString('utf8'), 'AMT Tool:\none@example.com:  $&`*:senha  \ntwo:á123\n\nVENC-001,VENC-002\n\nTSM Tool:\nother:other-password\n\nVENC-003');
   const denied = interaction('vencidas', {}, { roles: [] });
   const reads = store.displayReads.length;
   await app.handle(denied);
@@ -515,16 +515,37 @@ test('editing forwards only chosen fields, preserves amounts and accepts future 
   assert.match(content(request), /atualizada/);
 });
 
-test('replacement requires exact new credentials and both plans, deriving the sale from its ID', async () => {
+test('troca funciona como edição: só a venda e a nova conta são exigidas', async () => {
   const { app, store } = harness();
-  const request = interaction('troca', { venda: 'VEN-001', plano_anterior: '12 horas', plano_novo: '3 meses', login: 'new-login', senha: '  new$&`  ' });
-  await app.handle(request);
-  const call = store.calls[0];
+  store.rows.vendas.push({ id: 'VEN-001', type: 'vendas', tool: 'Unlock Tool', plan: '12 horas', expiresAt: '2026-10-03T03:00:00.000Z' });
+  store.replaceSaleAccount = async function (guild, values) {
+    this.calls.push({ method: 'replaceSaleAccount', values: structuredClone(values) });
+    return { id: 'TRC-001', previousAccountId: 'ACC-001', accountId: values.accountId || 'ACC-002', login: values.login || 'stock', previousPlan: '12 horas', newPlan: values.newPlan || '12 horas', expiresAt: values.expiresAt || '2026-10-03T03:00:00.000Z' };
+  };
+  const manualSwap = interaction('troca', { venda: 'VEN-001', login: 'new-login', senha: '  new$&`  ' });
+  await app.handle(manualSwap);
+  let call = store.calls.at(-1);
   assert.equal(call.method, 'replaceSaleAccount');
-  assert.equal(call.values.previousPlan, '12 horas'); assert.equal(call.values.newPlan, '3 meses');
   assert.equal(call.values.password, '  new$&`  ');
-  assert.match(content(request), /Plano anterior: 12 horas/);
-  assert.match(content(request), /Plano novo: 3 meses/);
+  for (const key of ['previousPlan', 'newPlan', 'expiresAt', 'accountId']) assert.equal(Object.hasOwn(call.values, key), false, key);
+  assert.match(content(manualSwap), /ACC-001 → \*\*ACC-002\*\*/);
+  assert.match(content(manualSwap), /Plano: 12 horas\n/);
+  assert.match(content(manualSwap), /Vencimento: \*\*03\/10\/2026 00:00/);
+
+  const stockSwap = interaction('troca', { venda: 'ven-001', conta: 'acc-007', plano_novo: '3 meses', vencimento: '10/11/2026' });
+  await app.handle(stockSwap);
+  call = store.calls.at(-1);
+  assert.equal(call.values.accountId, 'ACC-007'); assert.equal(call.values.newPlan, '3 meses');
+  assert.equal(call.values.expiresAt, '2026-11-10T03:00:00.000Z', 'keeps the current time when only the date changes');
+  assert.equal(Object.hasOwn(call.values, 'password'), false);
+  assert.match(content(stockSwap), /Plano: 12 horas → \*\*3 meses\*\*/);
+
+  for (const values of [{ venda: 'VEN-001' }, { venda: 'VEN-001', login: 'x' }, { venda: 'VEN-001', conta: 'ACC-002', senha: 'y' }]) {
+    const calls = store.calls.length;
+    const invalid = interaction('troca', values);
+    await app.handle(invalid);
+    assert.match(content(invalid), /❌/); assert.equal(store.calls.length, calls);
+  }
 });
 
 test('troca recusa venda inválida antes de gravar o registro', async () => {

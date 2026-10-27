@@ -16,6 +16,14 @@ function option(interaction, type, name) {
   return interaction.options[`get${type}`]?.(name) ?? null;
 }
 
+/** Replaces only the informed date and/or time of an existing São Paulo timestamp. */
+function correctedDate(date, time, original) {
+  const [oldDate, oldTime] = formatBR(original).split(' ');
+  const parsed = parseDateTimeBR(`${date || oldDate} ${time || oldTime}`);
+  if (!parsed) throw new Error('Data ou hora inválida. Use DD/MM/AAAA e HH:MM.');
+  return parsed.toISOString();
+}
+
 function hasRole(member, id) {
   if (!id) return false;
   return Array.isArray(member?.roles) ? member.roles.includes(id) : Boolean(member?.roles?.cache?.has(id));
@@ -309,12 +317,6 @@ class BotApp {
       if (str('login') !== null) changes.login = validation.text(str('login'), 'Login');
       if (str('senha') !== null) changes.password = validation.password(str('senha'));
       if (number('valor') !== null || number('desconto') !== null) Object.assign(changes, validation.amounts(sale.tool, changes.plan || sale.plan, number('valor') ?? ((sale.priceCents + (sale.discountCents || 0)) / 100), number('desconto') ?? ((sale.discountCents || 0) / 100)));
-      const correctedDate = (date, time, original) => {
-        const [oldDate, oldTime] = formatBR(original).split(' ');
-        const parsed = parseDateTimeBR(`${date || oldDate} ${time || oldTime}`);
-        if (!parsed) throw new Error('Data ou hora inválida. Use DD/MM/AAAA e HH:MM.');
-        return parsed.toISOString();
-      };
       if (str('data') || str('hora')) changes.registeredAt = correctedDate(str('data'), str('hora'), sale.registeredAt);
       if (str('vencimento') || str('hora_vencimento')) changes.expiresAt = correctedDate(str('vencimento'), str('hora_vencimento'), sale.expiresAt);
       const edited = await this.store.editSale(guildId, { saleId, changes, actorId, editedAt: registeredAt });
@@ -323,8 +325,25 @@ class BotApp {
 
     if (command === 'troca') {
       const saleId = validation.id(str('venda'), 'VEN');
-      const record = await this.store.replaceSaleAccount(guildId, { saleId, previousPlan: str('plano_anterior'), newPlan: str('plano_novo'), login: validation.text(str('login'), 'Login'), password: validation.password(str('senha')), reason: str('motivo') ? validation.text(str('motivo'), 'Motivo', 300) : '', observation: str('observacao') ? validation.text(str('observacao'), 'Observação', 500) : '', registeredAt, actorId });
-      return this.publishChanges(interaction, `✅ Troca **${safe(record.id)}** concluída na venda **${safe(saleId)}**.\nPlano anterior: ${safe(record.previousPlan)}\nPlano novo: ${safe(record.newPlan)}\nA conta antiga ${safe(record.previousAccountId)} aguarda troca de senha. Use /conta senha após alterá-la externamente.`);
+      const accountId = str('conta');
+      const login = str('login'), password = str('senha');
+      if (accountId && (login != null || password != null)) throw new Error('Escolha a nova conta pelo ID ou informe login e senha manualmente.');
+      if (!accountId && (!login || password == null)) throw new Error('Informe a nova conta: conta (ID ACC do estoque) ou login e senha.');
+      const sale = await this.store.getRecord(guildId, 'vendas', saleId);
+      if (!sale) throw new Error('Venda não encontrada.');
+      const changes = {};
+      if (str('plano_novo') !== null) changes.newPlan = str('plano_novo');
+      if (str('vencimento') || str('hora_vencimento')) changes.expiresAt = correctedDate(str('vencimento'), str('hora_vencimento'), sale.expiresAt);
+      const record = await this.store.replaceSaleAccount(guildId, { saleId, ...changes,
+        ...(accountId ? { accountId: validation.id(accountId, 'ACC') } : { login: validation.text(login, 'Login'), password: validation.password(password) }),
+        reason: str('motivo') ? validation.text(str('motivo'), 'Motivo', 300) : '', observation: str('observacao') ? validation.text(str('observacao'), 'Observação', 500) : '', registeredAt, actorId });
+      return this.publishChanges(interaction, [
+        `✅ Troca **${safe(record.id)}** concluída na venda **${safe(saleId)}**.`,
+        `Conta: ${safe(record.previousAccountId)} → **${safe(record.accountId)}** (${safe(record.login)})`,
+        record.newPlan === record.previousPlan ? `Plano: ${safe(record.newPlan)}` : `Plano: ${safe(record.previousPlan)} → **${safe(record.newPlan)}**`,
+        `Vencimento: **${formatBR(record.expiresAt)}**`,
+        `A conta antiga ${safe(record.previousAccountId)} aguarda troca de senha. Use /conta senha após alterá-la externamente.`
+      ].join('\n'));
     }
 
     if (['troca-senha', 'trocar-senhas'].includes(command)) {
@@ -366,10 +385,12 @@ class BotApp {
       for (const record of expirations) {
         const display = await this.store.getDisplayRecord(guildId, 'vencimentos', record.id);
         if (!display?.login || display.password === undefined) throw new Error(`A credencial de ${record.id} não está disponível no histórico.`);
-        if (!groups.has(record.tool)) groups.set(record.tool, []);
-        groups.get(record.tool).push(`${display.login}:${display.password}`);
+        if (!groups.has(record.tool)) groups.set(record.tool, { lines: [], ids: [] });
+        groups.get(record.tool).lines.push(`${display.login}:${display.password}`);
+        groups.get(record.tool).ids.push(record.id);
       }
-      const text = [...groups].map(([tool, lines]) => `${tool}:\n${lines.join('\n')}`).join('\n\n');
+      // The ID line can be pasted directly into /trocar-senhas vencimentos:.
+      const text = [...groups].map(([tool, { lines, ids }]) => `${tool}:\n${lines.join('\n')}\n\n${ids.join(',')}`).join('\n\n');
       return interaction.editReply({ content: '', files: [{ name: 'vencidas.txt', attachment: Buffer.from(text, 'utf8') }], allowedMentions: { parse: [] } });
     }
 
