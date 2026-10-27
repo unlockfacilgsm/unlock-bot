@@ -817,7 +817,17 @@ class Store {
         if (account.pendingDelivery || this._hasPending(state, account.id)) throw new Error('A conta possui entrega pendente; aguarde a publicação.');
         if (changes.login !== undefined) {
           requiredText(changes.login, 'Login', 100);
-          if (Object.values(state.accounts).some(other => other.id !== account.id && other.tool === sale.tool && other.login === changes.login)) throw new Error('Esse login já pertence a outra conta.');
+          const duplicate = Object.values(state.accounts).find(other => other.id !== account.id && other.tool === sale.tool && other.login === changes.login);
+          if (duplicate) {
+            if (duplicate.status !== 'available' || duplicate.activeSaleId || duplicate.needsPasswordReset || duplicate.pendingDelivery || this._hasPending(state, duplicate.id)) {
+              throw new Error(`Esse login já pertence à conta ${duplicate.id}, que está em uso ou aguardando troca de senha.`);
+            }
+            // The same physical account is still listed as free stock: this sale is using it, so the stale entry leaves the stock.
+            delete state.accounts[duplicate.id];
+            this._cancelDeliveries(state, entry => entry.payload?.accountId === duplicate.id);
+            this._queueMessageRemoval(state, duplicate, { accountId: duplicate.id, tool: duplicate.tool });
+            this._audit(state, 'account.merged', duplicate.id, actorId, editedAt, { saleId: sale.id, accountId: account.id });
+          }
           account.login = changes.login; sale.login = changes.login;
         }
         if (changes.password !== undefined) {

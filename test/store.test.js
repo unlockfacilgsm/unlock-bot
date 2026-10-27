@@ -498,3 +498,24 @@ test('replacement by stock account validates ownership and availability; a new p
   assert.equal(corrected.expiresAt, '2090-03-01T15:00:00.000Z');
   await assert.rejects(store.replaceSaleAccount(GUILD, { saleId: sale.id, login: 'again', password: 'a', expiresAt: '2089-01-01T00:00:00.000Z' }), /preceder/);
 });
+
+test('editing a sale login to an idle stock duplicate takes over that account instead of failing', async () => {
+  const fixture = discordFixture(); const store = fixture.store(); await store.load();
+  // Real case VEN-141: the account was back in stock as ACC-001, and the sale used a provisional login.
+  const stale = await store.upsertAccount(GUILD, { tool: 'Unlock Tool', login: 'sultanvai_america', password: 'old-pass' });
+  const sale = await store.createSale(GUILD, saleData({ login: 'sultanvai_america senha diferente', password: 'clienteulfc123' }));
+  for (const item of await store.listOutbox(GUILD)) await store.completeOutbox(item.id, { messageId: `m-${item.id}`, channelId: 'free' });
+  const [expiration] = await store.expireSales(GUILD, '2090-01-02T10:00:00.000Z');
+  const edited = await store.editSale(GUILD, { saleId: sale.id, changes: { login: 'sultanvai_america' }, actorId: 'admin' });
+  assert.equal(edited.login, 'sultanvai_america');
+  assert.equal(await store.getAccount(GUILD, stale.id), null, 'the stale stock entry is gone');
+  const account = await store.getAccount(GUILD, sale.accountId);
+  assert.equal(account.login, 'sultanvai_america'); assert.equal(account.password, 'clienteulfc123');
+  assert.equal((await store.getRecord(GUILD, 'vencimentos', expiration.id)).login, 'sultanvai_america');
+  assert.ok((await store.listOutbox(GUILD)).some(entry => entry.kind === 'delete-message' && entry.payload.accountId === stale.id));
+  assert.ok((await store.listAudit(GUILD)).some(event => event.action === 'account.merged' && event.entity === stale.id));
+
+  // An account in use by another sale is still protected.
+  const other = await store.createSale(GUILD, saleData({ login: 'busy-login', password: 'b' }));
+  await assert.rejects(store.editSale(GUILD, { saleId: sale.id, changes: { login: 'busy-login' } }), new RegExp(`${other.accountId}, que está em uso`));
+});
