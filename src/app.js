@@ -94,8 +94,8 @@ class BotApp {
       const sale = saleId ? await this.store.getRecord(this.guildId, 'vendas', saleId.trim().toUpperCase()) : null;
       tool = sale?.tool;
     }
-    // Credits are only sold as a new sale; they have no period to renew or replace.
-    return interaction.respond(catalog.planChoices(tool, focused.value, { credits: !existingSale }));
+    // Credits and courses are only sold as a new sale; they have no period to renew or replace.
+    return interaction.respond(catalog.planChoices(tool, focused.value, { oneTime: !existingSale }));
   }
 
   async publishChanges(interaction, content) {
@@ -280,14 +280,17 @@ class BotApp {
       const accountId = str('conta');
       const login = str('login'), password = str('senha');
       const credits = option(interaction, 'Integer', 'creditos');
-      if (catalog.isCreditPlan(tool, plan)) {
-        if (credits == null) throw new Error('Informe a quantidade em creditos para o plano Créditos.');
-        if (accountId || password != null) throw new Error('Venda de créditos não usa conta do estoque nem senha; informe apenas o login do cliente, se quiser.');
-        const values = validation.amounts(tool, plan, number('valor'), number('desconto'), validation.credits(credits));
-        const sale = await this.store.createSale(guildId, { client: validation.text(str('cliente'), 'Cliente'), tool, plan, credits,
+      if (catalog.isOneTimePlan(tool, plan)) {
+        const credit = catalog.isCreditPlan(tool, plan);
+        if (credit && credits == null) throw new Error('Informe a quantidade em creditos para o plano Créditos.');
+        if (!credit && credits != null) throw new Error('A quantidade de créditos só vale para o plano Créditos.');
+        if (accountId || password != null) throw new Error(`Venda de ${plan.toLocaleLowerCase('pt-BR')} não usa conta do estoque nem senha; informe apenas o login do cliente, se quiser.`);
+        const values = validation.amounts(tool, plan, number('valor'), number('desconto'), credit ? validation.credits(credits) : 1);
+        const sale = await this.store.createSale(guildId, { client: validation.text(str('cliente'), 'Cliente'), tool, plan, ...(credit ? { credits } : {}),
           ...(login ? { login: validation.text(login, 'Login') } : {}),
           ...values, registeredAt: buildRegisteredAt(str('data'), str('hora'), now).toISOString(), actorId });
-        return this.publishChanges(interaction, `✅ Venda **${safe(sale.id)}** registrada: **${credits} crédito(s)** de ${safe(tool)}.${sale.login ? `\nLogin: ${safe(sale.login)}` : ''}\nValor: **${catalog.money(sale.priceCents)}**`);
+        const item = credit ? `**${credits} crédito(s)**` : `**${safe(plan)}**`;
+        return this.publishChanges(interaction, `✅ Venda **${safe(sale.id)}** registrada: ${item} de ${safe(tool)}.${sale.login ? `\nLogin: ${safe(sale.login)}` : ''}\nValor: **${catalog.money(sale.priceCents)}**${sale.discountCents ? ` (desconto de ${catalog.money(sale.discountCents)})` : ''}`);
       }
       if (credits != null) throw new Error('A quantidade de créditos só vale para o plano Créditos.');
       if (accountId && (login != null || password != null)) throw new Error('Escolha a conta pelo ID ou informe login e senha manualmente.');

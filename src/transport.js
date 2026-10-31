@@ -173,6 +173,7 @@ function renderRecord(record) {
   if (record.accountId) lines.push(`Conta: ${safe(record.accountId)}`);
   if (record.login) lines.push(`Login: ${safe(record.login)}`);
   if (record.credits) lines.push(`Créditos: ${safe(record.credits)}`);
+  else if (record.oneTime) { /* A course has no credential. */ }
   else if (record.type === 'vendas' || (record.type === 'trocas' && record.newPlan)) lines.push(`Senha: ${record.password !== undefined ? safe(record.password) : 'não disponível no histórico'}`);
   if (record.previousPlan) lines.push(`Plano anterior: ${safe(record.previousPlan)}`);
   if (record.newPlan) lines.push(`Plano novo: ${safe(record.newPlan)}`);
@@ -387,7 +388,7 @@ class DiscordTransport {
       '**UNLOCK FÁCIL — COMANDOS**',
       'Use o canal de painel. Consultas e credenciais exibidas por comando são privadas.',
       '`/conta adicionar` cadastra uma conta no estoque; `/conta excluir` (administração) remove contas e apaga a publicação; `/estoque` consulta contas por ferramenta e estado.',
-      '`/vender` reserva uma conta livre, registra o valor cobrado e calcula o vencimento. No plano Créditos, informe `creditos` (R$ 5,00 cada); não reserva conta nem vence.',
+      '`/vender` reserva uma conta livre, registra o valor cobrado e calcula o vencimento. No plano Créditos, informe `creditos` (R$ 5,00 cada); Créditos e Curso não reservam conta nem vencem.',
       '`/renovar venda:VEN-...` registra uma nova receita e mantém os valores anteriores.',
       '`/editar-venda venda:VEN-...` corrige os campos informados, mantendo o ID.',
       '`/troca venda:VEN-...` substitui a conta da venda: informe `conta:ACC-...` do estoque ou `login` e `senha`; `plano_novo` e `vencimento` são opcionais. O vencimento lista as contas trocadas na compra.',

@@ -4,7 +4,7 @@ const { randomUUID, randomBytes, createHmac, timingSafeEqual } = require('node:c
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { normalizeEncryptionKey, encryptString, decryptString } = require('./crypto');
 const { calculateExpiration } = require('./dates');
-const { TOOLS, getPlan, isCreditPlan } = require('./catalog');
+const { TOOLS, getPlan, isCreditPlan, isOneTimePlan } = require('./catalog');
 const { password: validatePassword } = require('./validation');
 
 const TYPES = Object.freeze({ vendas: 'VEN', vencimentos: 'VENC', renovacoes: 'REN', trocas: 'TRC' });
@@ -69,6 +69,9 @@ function emptyState(guildId) {
     accounts: {}, counters: {}, config: {}, outbox: {}, audit: [],
   };
 }
+
+// Credit sales recorded before courses existed carry only `credits`.
+const isOneTimeSale = sale => Boolean(sale?.oneTime || sale?.credits);
 
 function sortMessages(a, b) {
   if (/^\d+$/.test(String(a.id)) && /^\d+$/.test(String(b.id))) {
@@ -708,7 +711,7 @@ class Store {
       getPlan(data.tool, data.plan);
       const priceCents = cents(data.priceCents, 'Preço');
       const discountCents = cents(data.discountCents ?? 0, 'Desconto');
-      if (isCreditPlan(data.tool, data.plan)) return this._creditSale(state, data, priceCents, discountCents);
+      if (isOneTimePlan(data.tool, data.plan)) return this._oneTimeSale(state, data, priceCents, discountCents);
       let account = data.accountId ? state.accounts[data.accountId] : this._findAccount(state, data.tool, data.login);
       if (data.accountId && !account) throw new Error('Conta não encontrada.');
       if (!account) account = this._upsertAccount(state, data);
@@ -734,18 +737,20 @@ class Store {
     });
   }
 
-  _creditSale(state, data, priceCents, discountCents) {
-    // Credits are loaded into the customer's own login: no stock account, password or expiration.
-    if (!Number.isSafeInteger(data.credits) || data.credits < 1) throw new Error('Informe a quantidade de créditos.');
-    if (data.accountId || data.password !== undefined) throw new Error('Venda de créditos não usa conta do estoque nem senha.');
+  _oneTimeSale(state, data, priceCents, discountCents) {
+    // Credits go to the customer's own login and courses need no login: no stock account, password or expiration.
+    const credit = isCreditPlan(data.tool, data.plan);
+    if (credit && (!Number.isSafeInteger(data.credits) || data.credits < 1)) throw new Error('Informe a quantidade de créditos.');
+    if (!credit && data.credits !== undefined) throw new Error('A quantidade de créditos só vale para o plano Créditos.');
+    if (data.accountId || data.password !== undefined) throw new Error(`Venda de ${data.plan.toLocaleLowerCase('pt-BR')} não usa conta do estoque nem senha.`);
     const registeredAt = isoDate(data.registeredAt);
     const record = { id: this._next(state, 'VEN'), type: 'vendas', guildId: this.guildId, client: data.client,
-      tool: data.tool, plan: data.plan, currentPlan: data.plan, credits: data.credits,
+      tool: data.tool, plan: data.plan, currentPlan: data.plan, oneTime: true, ...(credit ? { credits: data.credits } : {}),
       ...(data.login ? { login: requiredText(data.login, 'Login', 500) } : {}),
       priceCents, discountCents, priceEstimated: false, registeredAt, status: 'completed', actorId: data.actorId || null };
     state.records.vendas[record.id] = record;
     this._publish(state, 'vendas', record);
-    this._audit(state, 'sale.created', record.id, data.actorId, registeredAt, { credits: data.credits, priceCents, discountCents });
+    this._audit(state, 'sale.created', record.id, data.actorId, registeredAt, { ...(credit ? { credits: data.credits } : {}), priceCents, discountCents });
     return this._publicRecord(record);
   }
 
@@ -754,7 +759,7 @@ class Store {
     return this._mutate((state) => {
       const sale = state.records.vendas[data.saleId];
       if (!sale) throw new Error('Venda não encontrada.');
-      if (sale.credits) throw new Error('Venda de créditos não tem renovação; registre uma nova venda de créditos.');
+      if (isOneTimeSale(sale)) throw new Error(`Venda de ${sale.plan.toLocaleLowerCase('pt-BR')} não tem renovação; registre uma nova venda.`);
       const account = state.accounts[sale.accountId];
       if (sale.status === 'released' || !account || account.activeSaleId !== sale.id) throw new Error('Esta venda já teve a conta liberada ou transferida.');
       const priceCents = cents(data.priceCents, 'Preço');
@@ -786,10 +791,10 @@ class Store {
     return this._mutate(state => {
       const sale = state.records.vendas[saleId];
       if (!sale) throw new Error('Venda não encontrada.');
-      const allowed = sale.credits ? ['client', 'priceCents', 'discountCents', 'registeredAt', 'login'] : ['client', 'plan', 'priceCents', 'discountCents', 'registeredAt', 'expiresAt', 'login', 'password'];
+      const allowed = isOneTimeSale(sale) ? ['client', 'priceCents', 'discountCents', 'registeredAt', 'login'] : ['client', 'plan', 'priceCents', 'discountCents', 'registeredAt', 'expiresAt', 'login', 'password'];
       const fields = Object.keys(changes);
-      if (!fields.length || fields.some(field => !allowed.includes(field))) throw new Error(sale.credits ? 'Em vendas de créditos é possível corrigir cliente, valor, desconto, data do registro e login.' : 'Informe ao menos um campo válido para editar.');
-      if (sale.credits) {
+      if (!fields.length || fields.some(field => !allowed.includes(field))) throw new Error(isOneTimeSale(sale) ? 'Em vendas de créditos ou curso é possível corrigir cliente, valor, desconto, data do registro e login.' : 'Informe ao menos um campo válido para editar.');
+      if (isOneTimeSale(sale)) {
         if (changes.client !== undefined) sale.client = requiredText(changes.client, 'Cliente', 100);
         if (changes.login !== undefined) sale.login = requiredText(changes.login, 'Login', 100);
         if (changes.registeredAt !== undefined) sale.registeredAt = isoDate(changes.registeredAt);
@@ -993,7 +998,7 @@ class Store {
     return this._mutate(state => {
       const sale = state.records.vendas[data.saleId];
       if (!sale) throw new Error('Venda não encontrada.');
-      if (sale.credits) throw new Error('Venda de créditos não possui conta do estoque para troca.');
+      if (isOneTimeSale(sale)) throw new Error(`Venda de ${sale.plan.toLocaleLowerCase('pt-BR')} não possui conta do estoque para troca.`);
       const oldAccount = state.accounts[sale.accountId];
       if (!oldAccount || oldAccount.activeSaleId !== sale.id || sale.status === 'released' || sale.migrationConflict) throw new Error('A venda não possui uma conta vinculada elegível para troca.');
       const previousPlan = sale.currentPlan || sale.plan;

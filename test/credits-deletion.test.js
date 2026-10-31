@@ -102,7 +102,7 @@ test('credit plan costs R$ 5,00 per credit and the 6-month plan has an expiratio
   assert.equal(validation.amounts('Unlock Tool', '1 mês', null, null, 7).priceCents, 3000);
   assert.deepEqual(catalog.planChoices('Unlock Tool', 'cred').map(choice => choice.value), ['Créditos']);
   assert.match(catalog.planChoices('Unlock Tool', 'cred')[0].name, /^Créditos — R\$\s5,00 por crédito$/);
-  assert.equal(catalog.planChoices('Unlock Tool', '', { credits: false }).some(choice => choice.value === 'Créditos'), false);
+  assert.equal(catalog.planChoices('Unlock Tool', '', { oneTime: false }).some(choice => choice.value === 'Créditos'), false);
   assert.equal(formatBR(calculateExpiration('6 meses', new Date('2026-01-15T12:00:00-03:00'))), '15/07/2026 12:00');
 });
 
@@ -208,4 +208,26 @@ test('commands expose creditos in /vender and the excluir subcommand in /conta',
   assert.equal(credits.required, false); assert.equal(credits.min_value, 1);
   const remove = commands.find(command => command.name === 'conta').options.find(option => option.name === 'excluir');
   assert.deepEqual(remove.options.map(option => [option.name, option.required]), [['contas', true], ['confirmar', true]]);
+});
+
+test('/vender plano Curso costs R$ 45,00, accepts a discount and needs no account', async () => {
+  const f = await setup(() => new Date('2026-10-02T13:00:00Z'));
+  assert.deepEqual(catalog.planChoices('Unlock Tool', 'curso').map(choice => choice.value), ['Curso']);
+  assert.match(catalog.planChoices('Unlock Tool', 'curso')[0].name, /^Curso — R\$\s45,00$/);
+  assert.deepEqual(catalog.planChoices('TSM Tool', 'curso'), [], 'only the Unlock Tool has a course');
+  assert.equal(catalog.planChoices('Unlock Tool', '', { oneTime: false }).some(choice => choice.value === 'Curso'), false);
+
+  const reply = await f.run('vender', { cliente: 'Aluno', ferramenta: 'Unlock Tool', plano: 'Curso', desconto: 5 });
+  assert.match(reply, /✅/); assert.match(reply, /\*\*Curso\*\*/); assert.match(reply, /R\$\s40,00/); assert.match(reply, /desconto de R\$\s5,00/);
+  const [sale] = await f.store.listRecords(f.guild.id, 'vendas');
+  assert.equal(sale.priceCents, 4000); assert.equal(sale.discountCents, 500);
+  assert.equal(sale.oneTime, true); assert.equal(sale.credits, undefined); assert.equal(sale.expiresAt, undefined); assert.equal(sale.accountId, undefined);
+  const text = renderRecord(await f.store.getDisplayRecord(f.guild.id, 'vendas', sale.id));
+  assert.doesNotMatch(text, /Senha|Vencimento|Créditos/);
+
+  assert.match(await f.run('vender', { cliente: 'A', ferramenta: 'Unlock Tool', plano: 'Curso', creditos: 2 }), /❌.*só vale para o plano Créditos/);
+  assert.match(await f.run('vender', { cliente: 'A', ferramenta: 'Unlock Tool', plano: 'Curso', login: 'x', senha: 'y' }), /❌.*não usa conta/);
+  assert.match(await f.run('renovar', { venda: sale.id, plano: '1 mês' }), /❌.*não tem renovação/);
+  assert.match(await f.run('troca', { venda: sale.id, login: 'x', senha: 'y' }), /❌/);
+  assert.equal((await f.store.listAccounts(f.guild.id)).length, 0);
 });
