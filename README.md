@@ -29,7 +29,7 @@ Após criar a estrutura, copie o ID do canal privado `dados-bot` para `DISCORD_D
 | --- | --- |
 | 🔓 Unlock Tool | 12 horas — R$ 10,00; 1 mês — R$ 30,00; 3 meses — R$ 60,00; 6 meses — R$ 90,00; Curso — R$ 45,00 |
 | 🔧 Borneo Schematics | 3 dias — R$ 30,00; 1 mês — R$ 55,00 (2 HWIDs) |
-| 🛠️ TSM Tool | 12 horas — R$ 20,00; 1 mês — R$ 40,00 |
+| 🛠️ TSM Tool | 12 horas — R$ 20,00; 1 mês — R$ 40,00; 3 meses — R$ 60,00 |
 | ⚙️ AMT Tool | 12 horas — R$ 20,00; 1 mês — R$ 40,00 |
 | 🔩 TFM Tool | 12 horas — R$ 20,00; 1 mês — R$ 40,00 |
 | Todas as ferramentas | Créditos — R$ 5,00 por crédito |

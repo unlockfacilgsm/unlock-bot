@@ -15,7 +15,7 @@ const TOOLS = Object.freeze({
     '3 dias': { priceCents: 3000, days: 3 }, '1 mês': { priceCents: 5000, months: 1 }, [CREDIT_PLAN]: CREDIT
   } },
   'TSM Tool': { emoji: '🛠️', channelKey: 'tsmTool', channelName: '🆓・tsm-tool', plans: {
-    '12 horas': { priceCents: 2000, hours: 12 }, '1 mês': { priceCents: 4000, months: 1 }, [CREDIT_PLAN]: CREDIT
+    '12 horas': { priceCents: 2000, hours: 12 }, '1 mês': { priceCents: 4000, months: 1 }, '3 meses': { priceCents: 6000, months: 3 }, [CREDIT_PLAN]: CREDIT
   } },
   'AMT Tool': { emoji: '⚙️', channelKey: 'amtTool', channelName: '🆓・amt-tool', plans: {
     '12 horas': { priceCents: 2000, hours: 12 }, '1 mês': { priceCents: 4000, months: 1 }, [CREDIT_PLAN]: CREDIT
