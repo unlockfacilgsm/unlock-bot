@@ -737,6 +737,30 @@ class Store {
     });
   }
 
+  // Automatic site/WhatsApp sale: recorded like /vender, but the account and its
+  // recycling belong to the site, so no bot stock account is bound to it.
+  async createSiteSale(guildId, data) {
+    this._guild(guildId);
+    return this._mutate((state) => {
+      const siteOrder = requiredText(data.siteOrder, 'Pedido do site', 100);
+      const existing = Object.values(state.records.vendas).find((sale) => sale.siteOrder === siteOrder);
+      if (existing) return this._publicRecord(existing);
+      requiredText(data.client, 'Cliente', 500);
+      requiredText(data.plan, 'Plano', 100);
+      if (!Object.hasOwn(TOOLS, data.tool)) throw new Error('Ferramenta inválida.');
+      const registeredAt = isoDate(data.registeredAt);
+      const record = { id: this._next(state, 'VEN'), type: 'vendas', guildId: this.guildId, client: data.client,
+        tool: data.tool, plan: data.plan, currentPlan: data.plan, oneTime: true,
+        source: data.source === 'whatsapp' ? 'whatsapp' : 'site', siteOrder,
+        priceCents: cents(data.priceCents, 'Preço'), discountCents: 0, priceEstimated: false, registeredAt,
+        ...(data.expiresAt ? { expiresAt: isoDate(data.expiresAt) } : {}), status: 'completed', actorId: null };
+      state.records.vendas[record.id] = record;
+      this._publish(state, 'vendas', record);
+      this._audit(state, 'sale.created', record.id, null, registeredAt, { siteOrder, priceCents: record.priceCents });
+      return this._publicRecord(record);
+    });
+  }
+
   _oneTimeSale(state, data, priceCents, discountCents) {
     // Credits go to the customer's own login and courses need no login: no stock account, password or expiration.
     const credit = isCreditPlan(data.tool, data.plan);

@@ -9,7 +9,17 @@ const { DiscordTransport, ensureDataChannel, fetchAllMessages, CHANNEL_NAMES } =
 const { migrateLegacy } = require('./src/migration');
 const { BotApp } = require('./src/app');
 const catalog = require('./src/catalog');
+const { loadCatalog } = require('./src/catalog-sync');
+const { SiteSync } = require('./src/site-sync');
+const { SiteSales } = require('./src/site-sales');
 const { formatDiscordError, safeErrorDetails } = require('./src/discord-errors');
+
+function createPool(env, logger) {
+  const url = env.DATABASE_URL;
+  if (!url) { logger.log('[pg] DATABASE_URL não configurada — catálogo dinâmico e sync desativados.'); return null; }
+  const pg = require('pg');
+  return new pg.Pool({ connectionString: url, max: 3, idleTimeoutMillis: 60_000 });
+}
 
 function validateEnvironment(env) {
   for (const name of ['DISCORD_TOKEN', 'GUILD_ID', 'ENCRYPTION_KEY']) {
@@ -43,6 +53,21 @@ async function start({ env = process.env, client = createClient(), logger = cons
   let app;
   let store;
   let interval;
+  let catalogInterval;
+  const pgPool = createPool(env, logger);
+  const siteSync = pgPool ? new SiteSync({ pool: pgPool, logger }) : null;
+
+  async function refreshCatalog() {
+    if (!pgPool) return;
+    try {
+      const dbTools = await loadCatalog(pgPool);
+      catalog.applyDynamic(dbTools);
+      logger.log('[catalog-sync] Catálogo atualizado do PostgreSQL.');
+    } catch (error) {
+      logger.error(`[catalog-sync] Falha ao carregar catálogo: ${error.message}`);
+    }
+  }
+
   const ready = new Promise((resolve, reject) => {
     client.once('clientReady', async connected => {
       let stage = 'acesso ao servidor';
@@ -53,8 +78,12 @@ async function start({ env = process.env, client = createClient(), logger = cons
         store = new Store({ channel, guildId: guild.id, botId: connected.user.id, encryptionKey: env.ENCRYPTION_KEY });
         stage = 'leitura do armazenamento';
         await store.load();
+        stage = 'sincronização do catálogo';
+        await refreshCatalog();
+        catalogInterval = setInterval(refreshCatalog, 5 * 60_000);
         const transport = new DiscordTransport({ client: connected, store, catalog });
-        app = new BotApp({ client: connected, store, transport, migrate: migrateLegacy, guildId: guild.id, adminRoleId: env.ADMIN_ROLE_ID, sellerRoleId: env.SELLER_ROLE_ID, logger });
+        const siteSales = pgPool ? new SiteSales({ pool: pgPool, store, guildId: guild.id, siteSync, logger }) : null;
+        app = new BotApp({ client: connected, store, transport, migrate: migrateLegacy, guildId: guild.id, adminRoleId: env.ADMIN_ROLE_ID, sellerRoleId: env.SELLER_ROLE_ID, logger, siteSync, siteSales });
         stage = 'leitura do histórico antigo';
         if (await legacyHistoryExists(guild, connected.user.id, store)) {
           app.requiresMigration = true;
@@ -88,12 +117,14 @@ async function start({ env = process.env, client = createClient(), logger = cons
 
   async function stop() {
     clearInterval(interval);
+    clearInterval(catalogInterval);
     if (app) {
       app.stopping = true;
       try { await app.runningTick; } catch { /* The durable queue resumes on restart. */ }
     }
     await store?.close();
     client.destroy();
+    if (pgPool) await pgPool.end().catch(() => {});
   }
 
   try {

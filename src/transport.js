@@ -169,6 +169,7 @@ function renderRecord(record) {
     `**${labels[record.type] || 'REGISTRO'} ${safe(record.id)}**`,
     `Cliente: ${safe(record.client)}`, `Ferramenta: ${safe(record.tool)}`
   ];
+  if (record.siteOrder) lines.push(`Origem: ${record.source === 'whatsapp' ? 'WhatsApp (bot)' : 'Site'} — pedido ${safe(record.siteOrder)}`);
   if (record.saleId) lines.push(`Venda: ${safe(record.saleId)}`);
   if (record.accountId) lines.push(`Conta: ${safe(record.accountId)}`);
   if (record.login) lines.push(`Login: ${safe(record.login)}`);

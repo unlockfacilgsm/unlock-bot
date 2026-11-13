@@ -30,8 +30,8 @@ function hasRole(member, id) {
 }
 
 class BotApp {
-  constructor({ client, store, transport, migrate, guildId, clock = () => new Date(), adminRoleId, sellerRoleId, logger = console }) {
-    Object.assign(this, { client, store, transport, migrate, guildId, clock, adminRoleId, sellerRoleId, logger });
+  constructor({ client, store, transport, migrate, guildId, clock = () => new Date(), adminRoleId, sellerRoleId, logger = console, siteSync = null, siteSales = null }) {
+    Object.assign(this, { client, store, transport, migrate, guildId, clock, adminRoleId, sellerRoleId, logger, siteSync, siteSales });
     this.runningTick = null;
     this.stopping = false;
     this.requiresMigration = false;
@@ -157,6 +157,7 @@ class BotApp {
         const amount = number('valor');
         if (!Number.isFinite(amount) || Math.abs(Math.round(amount * 100) / 100 - amount) > 1e-8) throw new Error('Informe o valor com no máximo duas casas decimais.');
         const expense = await this.store.createAdExpense(guildId, { amountCents: Math.round(amount * 100), date: parsedDate.toISOString().slice(0, 10), description: str('descricao') || '', actorId, registeredAt });
+        this.siteSync?.syncAdExpense(expense).catch(() => {});
         await this.refreshReports(interaction.guild);
         return this.publishChanges(interaction, `✅ Gasto **${safe(expense.id)}** registrado: **${catalog.money(expense.amountCents)}** em ${rawDate}.${expense.description ? `\nDescrição: ${safe(expense.description)}` : ''}`);
       }
@@ -290,6 +291,7 @@ class BotApp {
           ...(login ? { login: validation.text(login, 'Login') } : {}),
           ...values, registeredAt: buildRegisteredAt(str('data'), str('hora'), now).toISOString(), actorId });
         const item = credit ? `**${credits} crédito(s)**` : `**${safe(plan)}**`;
+        this.siteSync?.syncSale(sale).catch(() => {});
         return this.publishChanges(interaction, `✅ Venda **${safe(sale.id)}** registrada: ${item} de ${safe(tool)}.${sale.login ? `\nLogin: ${safe(sale.login)}` : ''}\nValor: **${catalog.money(sale.priceCents)}**${sale.discountCents ? ` (desconto de ${catalog.money(sale.discountCents)})` : ''}`);
       }
       if (credits != null) throw new Error('A quantidade de créditos só vale para o plano Créditos.');
@@ -299,6 +301,7 @@ class BotApp {
       const sale = await this.store.createSale(guildId, { client: validation.text(str('cliente'), 'Cliente'), tool, plan,
         ...(accountId ? { accountId: validation.id(accountId, 'ACC') } : { login: validation.text(login, 'Login'), password: validation.password(password) }),
         ...values, registeredAt: buildRegisteredAt(str('data'), str('hora'), now).toISOString(), actorId });
+      this.siteSync?.syncSale(sale).catch(() => {});
       return this.publishChanges(interaction, `✅ Venda **${safe(sale.id)}** registrada.\nConta: ${safe(sale.accountId)}\nValor: **${catalog.money(sale.priceCents)}**\nVencimento: **${formatBR(sale.expiresAt)}**`);
     }
 
@@ -307,6 +310,7 @@ class BotApp {
       const sale = await this.store.getRecord(guildId, 'vendas', saleId);
       if (!sale) throw new Error('Venda não encontrada.');
       const renewal = await this.store.renewSale(guildId, { saleId, plan: str('plano'), ...validation.amounts(sale.tool, str('plano'), number('valor'), number('desconto')), registeredAt, actorId });
+      this.siteSync?.syncRenewal({ ...renewal, tool: sale.tool, client: sale.client }).catch(() => {});
       return this.publishChanges(interaction, `✅ Renovação **${safe(renewal.id)}** registrada para ${safe(saleId)}.\nValor: **${catalog.money(renewal.priceCents)}**\nNovo vencimento: **${formatBR(renewal.expiresAt)}**`);
     }
 
@@ -340,6 +344,7 @@ class BotApp {
       const record = await this.store.replaceSaleAccount(guildId, { saleId, ...changes,
         ...(accountId ? { accountId: validation.id(accountId, 'ACC') } : { login: validation.text(login, 'Login'), password: validation.password(password) }),
         reason: str('motivo') ? validation.text(str('motivo'), 'Motivo', 300) : '', observation: str('observacao') ? validation.text(str('observacao'), 'Observação', 500) : '', registeredAt, actorId });
+      this.siteSync?.syncTrade({ ...record, tool: sale.tool, client: sale.client }).catch(() => {});
       return this.publishChanges(interaction, [
         `✅ Troca **${safe(record.id)}** concluída na venda **${safe(saleId)}**.`,
         `Conta: ${safe(record.previousAccountId)} → **${safe(record.accountId)}** (${safe(record.login)})`,
@@ -487,7 +492,11 @@ class BotApp {
     this.runningTick = (async () => {
       const channels = await this.store.getConfig(this.guildId, 'channels', {});
       if (!channels.painel || !channels.backups || this.requiresMigration || await this.store.getConfig(this.guildId, 'migrationRequired', false)) return;
-      await this.store.expireSales(this.guildId, this.clock().toISOString());
+      const expired = await this.store.expireSales(this.guildId, this.clock().toISOString());
+      if (this.siteSync && expired.length) {
+        for (const exp of expired) this.siteSync.syncExpiration(exp).catch(() => {});
+      }
+      if (this.siteSales) await this.siteSales.run().catch(error => this.logger.error(`[site-sales] ${error.message}`));
       await this.transport.reminders(guild);
       await this.transport.flush(guild);
       if (!this.orphansPurged && this.transport.purgeOrphanAccounts) {

@@ -1,12 +1,10 @@
 'use strict';
 
 const CREDIT_PLAN = 'Créditos';
-// Créditos não reservam conta nem vencem: o preço é por unidade.
 const CREDIT = Object.freeze({ priceCents: 500, perCredit: true });
-// Single products (courses) are sold once, like credits: no account, no expiration.
 const COURSE_PLAN = 'Curso';
 
-const TOOLS = Object.freeze({
+const FALLBACK_TOOLS = Object.freeze({
   'Unlock Tool': { emoji: '🔓', channelKey: 'unlockTool', channelName: '🆓・unlock-tool', plans: {
     '12 horas': { priceCents: 1000, hours: 12 }, '1 mês': { priceCents: 3000, months: 1 }, '3 meses': { priceCents: 6000, months: 3 }, '6 meses': { priceCents: 9000, months: 6 },
     [CREDIT_PLAN]: CREDIT, [COURSE_PLAN]: { priceCents: 4500, oneTime: true }
@@ -25,25 +23,45 @@ const TOOLS = Object.freeze({
   } }
 });
 
+let _tools = FALLBACK_TOOLS;
+
+function applyDynamic(dbTools) {
+  if (!dbTools || !Object.keys(dbTools).length) return;
+  const merged = {};
+  for (const [name, fallback] of Object.entries(FALLBACK_TOOLS)) {
+    const db = dbTools[name];
+    if (!db) { merged[name] = fallback; continue; }
+    const plans = { ...db.plans };
+    // Créditos and Curso are bot-only plans, not in catalog_plans — preserve them.
+    if (fallback.plans[CREDIT_PLAN]) plans[CREDIT_PLAN] = fallback.plans[CREDIT_PLAN];
+    if (fallback.plans[COURSE_PLAN]) plans[COURSE_PLAN] = fallback.plans[COURSE_PLAN];
+    merged[name] = { ...fallback, ...db, plans };
+  }
+  // Include any new tools from DB that aren't in fallback (future-proof).
+  for (const [name, db] of Object.entries(dbTools)) {
+    if (!merged[name]) merged[name] = db;
+  }
+  _tools = Object.freeze(merged);
+}
+
 function money(cents) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
 }
 
 function getPlan(tool, plan) {
-  if (!Object.hasOwn(TOOLS, tool)) throw new Error('Ferramenta inválida.');
-  if (!Object.hasOwn(TOOLS[tool].plans, plan)) throw new Error(`O plano ${plan} não está disponível para ${tool}.`);
-  return TOOLS[tool].plans[plan];
+  if (!Object.hasOwn(_tools, tool)) throw new Error('Ferramenta inválida.');
+  if (!Object.hasOwn(_tools[tool].plans, plan)) throw new Error(`O plano ${plan} não está disponível para ${tool}.`);
+  return _tools[tool].plans[plan];
 }
 
 function definitionOf(tool, plan) {
-  return Object.hasOwn(TOOLS, tool) && Object.hasOwn(TOOLS[tool].plans, plan) ? TOOLS[tool].plans[plan] : null;
+  return Object.hasOwn(_tools, tool) && Object.hasOwn(_tools[tool].plans, plan) ? _tools[tool].plans[plan] : null;
 }
 
 function isCreditPlan(tool, plan) {
   return Boolean(definitionOf(tool, plan)?.perCredit);
 }
 
-/** Credits and courses: sold once, without a stock account or an expiration. */
 function isOneTimePlan(tool, plan) {
   const definition = definitionOf(tool, plan);
   return Boolean(definition?.perCredit || definition?.oneTime);
@@ -54,16 +72,28 @@ function planPrice(definition) {
 }
 
 function toolChoices() {
-  return Object.keys(TOOLS).map(tool => ({ name: `${TOOLS[tool].emoji} ${tool}`, value: tool }));
+  return Object.keys(_tools).map(tool => ({ name: `${_tools[tool].emoji} ${tool}`, value: tool }));
 }
 
 function planChoices(tool, query = '', { oneTime = true } = {}) {
-  if (!Object.hasOwn(TOOLS, tool)) return [];
-  const normalized = value => value.toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f\s]/g, '');
+  if (!Object.hasOwn(_tools, tool)) return [];
+  const normalized = value => value.toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[̀-ͯ\s]/g, '');
   const search = normalized(query);
-  return Object.entries(TOOLS[tool].plans)
+  return Object.entries(_tools[tool].plans)
     .filter(([plan, definition]) => (oneTime || !(definition.perCredit || definition.oneTime)) && normalized(plan).includes(search))
     .map(([plan, definition]) => ({ name: `${plan} — ${planPrice(definition)}`, value: plan }));
 }
 
-module.exports = { TOOLS, CREDIT_PLAN, COURSE_PLAN, money, getPlan, validatePlan: getPlan, isCreditPlan, isOneTimePlan, planPrice, toolChoices, planChoices };
+Object.defineProperty(module.exports, 'TOOLS', { get: () => _tools, enumerable: true });
+module.exports.CREDIT_PLAN = CREDIT_PLAN;
+module.exports.COURSE_PLAN = COURSE_PLAN;
+module.exports.money = money;
+module.exports.getPlan = getPlan;
+module.exports.validatePlan = getPlan;
+module.exports.isCreditPlan = isCreditPlan;
+module.exports.isOneTimePlan = isOneTimePlan;
+module.exports.planPrice = planPrice;
+module.exports.toolChoices = toolChoices;
+module.exports.planChoices = planChoices;
+module.exports.applyDynamic = applyDynamic;
+module.exports.FALLBACK_TOOLS = FALLBACK_TOOLS;
