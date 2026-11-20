@@ -12,6 +12,10 @@ const catalog = require('./src/catalog');
 const { loadCatalog } = require('./src/catalog-sync');
 const { SiteSync } = require('./src/site-sync');
 const { SiteSales } = require('./src/site-sales');
+const { SwapSync } = require('./src/swap-sync');
+const { AccountSync } = require('./src/account-sync');
+const { ExpiryRotation } = require('./src/expiry-rotation');
+const { DailySummary } = require('./src/daily-summary');
 const { formatDiscordError, safeErrorDetails } = require('./src/discord-errors');
 
 function createPool(env, logger) {
@@ -83,7 +87,14 @@ async function start({ env = process.env, client = createClient(), logger = cons
         catalogInterval = setInterval(refreshCatalog, 5 * 60_000);
         const transport = new DiscordTransport({ client: connected, store, catalog });
         const siteSales = pgPool ? new SiteSales({ pool: pgPool, store, guildId: guild.id, siteSync, logger }) : null;
-        app = new BotApp({ client: connected, store, transport, migrate: migrateLegacy, guildId: guild.id, adminRoleId: env.ADMIN_ROLE_ID, sellerRoleId: env.SELLER_ROLE_ID, logger, siteSync, siteSales });
+        // Sincronia de contas com o estoque do site (precisa da chave de dados do site).
+        const accountSync = pgPool && env.SITE_ENCRYPTION_KEY ? new AccountSync({ pool: pgPool, store, guildId: guild.id, siteKey: env.SITE_ENCRYPTION_KEY, logger, dryRun: env.ACCOUNT_SYNC_DRY === '1' }) : null;
+        if (!accountSync) logger.log('[account-sync] Desligada (falta DATABASE_URL ou SITE_ENCRYPTION_KEY).');
+        // Vencidas: troca automática da Unlock Tool pelo trocador da VPS (usa a chave e o banco da sincronia).
+        const expiryRotation = accountSync && env.AUTO_ROTATE !== '0' ? new ExpiryRotation({ accountSync, store, guildId: guild.id, logger }) : null;
+        if (accountSync && expiryRotation) accountSync.skip = () => expiryRotation.inFlight;
+        app = new BotApp({ client: connected, store, transport, migrate: migrateLegacy, guildId: guild.id, adminRoleId: env.ADMIN_ROLE_ID, sellerRoleId: env.SELLER_ROLE_ID, logger, siteSync, siteSales, accountSync, expiryRotation, dailySummary: pgPool ? new DailySummary({ pool: pgPool, store, transport, guildId: guild.id, logger }) : null,
+          swapSync: pgPool && env.SITE_ENCRYPTION_KEY ? new SwapSync({ pool: pgPool, store, guildId: guild.id, siteKey: env.SITE_ENCRYPTION_KEY, siteSync, logger }) : null });
         stage = 'leitura do histórico antigo';
         if (await legacyHistoryExists(guild, connected.user.id, store)) {
           app.requiresMigration = true;

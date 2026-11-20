@@ -2,7 +2,15 @@
 
 const TIME_ZONE = 'America/Sao_Paulo';
 const OFFSET = 3 * 60 * 60 * 1000;
-const DURATIONS = { '12 horas': { hours: 12 }, '3 dias': { days: 3 }, '1 mês': { months: 1 }, '3 meses': { months: 3 }, '6 meses': { months: 6 }, '12 meses': { months: 12 } };
+const DURATIONS = { '12 horas': { hours: 12 }, '24 horas': { hours: 24 }, '3 dias': { days: 3 }, '1 mês': { months: 1 }, '3 meses': { months: 3 }, '6 meses': { months: 6 }, '12 meses': { months: 12 } };
+// Plano novo no catálogo do site ("48 horas", "2 meses"…) sem entrada fixa acima: lê a duração do nome.
+function durationOf(plan) {
+  if (DURATIONS[plan]) return DURATIONS[plan];
+  const m = String(plan || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').match(/^(\d{1,4})\s*(hora|horas|h|dia|dias|mes|meses)$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return m[2].startsWith('h') ? { hours: n } : m[2].startsWith('d') ? { days: n } : { months: n };
+}
 
 function formatBR(value) {
   const date = value instanceof Date ? value : new Date(value);
@@ -49,7 +57,7 @@ function addMonths(value, months) {
 }
 
 function calculateExpiration(plan, registeredAt) {
-  const duration = DURATIONS[plan];
+  const duration = durationOf(plan);
   const date = new Date(registeredAt);
   if (!duration || !Number.isFinite(date.getTime())) throw new Error('Plano ou data inválida.');
   if (duration.months) return addMonths(date, duration.months);

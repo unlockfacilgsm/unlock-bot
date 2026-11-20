@@ -566,7 +566,8 @@ class DiscordTransport {
     for (const sale of sales) {
       if (sale.status !== 'active') continue;
       const remaining = +new Date(sale.expiresAt) - now;
-      const defaultLead = (sale.currentPlan || sale.plan) === '12 horas' ? 60 : 24 * 60;
+      // Planos em horas (12 h, 24 h): avisa 1 h antes; os demais, 1 dia antes.
+      const defaultLead = /\bhoras?$/i.test(String(sale.currentPlan || sale.plan || '')) ? 60 : 24 * 60;
       const leadMinutes = Number(config.leadMinutes ?? config.byPlan?.[sale.currentPlan || sale.plan] ?? defaultLead);
       if (!Number.isFinite(leadMinutes) || leadMinutes <= 0 || remaining <= 0 || remaining > leadMinutes * 60000) continue;
       const account = await this.store.getAccount(guild.id, sale.accountId);

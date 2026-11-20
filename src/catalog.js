@@ -6,7 +6,7 @@ const COURSE_PLAN = 'Curso';
 
 const FALLBACK_TOOLS = Object.freeze({
   'Unlock Tool': { emoji: '🔓', channelKey: 'unlockTool', channelName: '🆓・unlock-tool', plans: {
-    '12 horas': { priceCents: 1000, hours: 12 }, '1 mês': { priceCents: 3000, months: 1 }, '3 meses': { priceCents: 6000, months: 3 }, '6 meses': { priceCents: 9000, months: 6 },
+    '24 horas': { priceCents: 1000, hours: 24 }, '1 mês': { priceCents: 3000, months: 1 }, '3 meses': { priceCents: 6000, months: 3 }, '6 meses': { priceCents: 9000, months: 6 },
     [CREDIT_PLAN]: CREDIT, [COURSE_PLAN]: { priceCents: 4500, oneTime: true }
   } },
   'Borneo Schematics': { emoji: '🔧', channelKey: 'borneoSchematics', channelName: '🆓・borneo-schematics', hwids: 1, plans: {
@@ -21,6 +21,14 @@ const FALLBACK_TOOLS = Object.freeze({
   'TFM Tool': { emoji: '🔩', channelKey: 'tfmTool', channelName: '🆓・tfm-tool', plans: {
     '12 horas': { priceCents: 2000, hours: 12 }, '1 mês': { priceCents: 4000, months: 1 }, [CREDIT_PLAN]: CREDIT
   } }
+});
+
+// Planos que saíram do catálogo mas ainda existem em vendas antigas (renovar, trocar conta,
+// editar, vencimento). Continuam VÁLIDOS para esses registros, mas não aparecem no /vender,
+// nas sugestões de plano nem no catálogo publicado.
+// 16/11/2026: Unlock Tool 12 horas → 24 horas pelo mesmo valor.
+const LEGACY_PLANS = Object.freeze({
+  'Unlock Tool': { '12 horas': { priceCents: 1000, hours: 12, legacy: true } },
 });
 
 let _tools = FALLBACK_TOOLS;
@@ -50,12 +58,15 @@ function money(cents) {
 
 function getPlan(tool, plan) {
   if (!Object.hasOwn(_tools, tool)) throw new Error('Ferramenta inválida.');
-  if (!Object.hasOwn(_tools[tool].plans, plan)) throw new Error(`O plano ${plan} não está disponível para ${tool}.`);
-  return _tools[tool].plans[plan];
+  if (Object.hasOwn(_tools[tool].plans, plan)) return _tools[tool].plans[plan];
+  if (LEGACY_PLANS[tool] && Object.hasOwn(LEGACY_PLANS[tool], plan)) return LEGACY_PLANS[tool][plan];
+  throw new Error(`O plano ${plan} não está disponível para ${tool}.`);
 }
 
 function definitionOf(tool, plan) {
-  return Object.hasOwn(_tools, tool) && Object.hasOwn(_tools[tool].plans, plan) ? _tools[tool].plans[plan] : null;
+  if (!Object.hasOwn(_tools, tool)) return null;
+  if (Object.hasOwn(_tools[tool].plans, plan)) return _tools[tool].plans[plan];
+  return LEGACY_PLANS[tool] && Object.hasOwn(LEGACY_PLANS[tool], plan) ? LEGACY_PLANS[tool][plan] : null;
 }
 
 function isCreditPlan(tool, plan) {
@@ -97,3 +108,4 @@ module.exports.toolChoices = toolChoices;
 module.exports.planChoices = planChoices;
 module.exports.applyDynamic = applyDynamic;
 module.exports.FALLBACK_TOOLS = FALLBACK_TOOLS;
+module.exports.LEGACY_PLANS = LEGACY_PLANS;

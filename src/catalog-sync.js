@@ -18,7 +18,7 @@ const TOOL_META = {
 
 function hoursToPlanDef(hours, priceCents) {
   if (hours === null || hours === undefined) return { priceCents };
-  if (hours <= 12) return { priceCents, hours };
+  if (hours <= 48) return { priceCents, hours };
   if (hours <= 72) return { priceCents, days: Math.round(hours / 24) };
   return { priceCents, months: Math.round(hours / 720) };
 }

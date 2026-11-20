@@ -8,7 +8,7 @@ const validation = require('../src/validation');
 const { summarize, dashboardText, monthlySalesText, exportCsv } = require('../src/reporting');
 
 test('catalog has the updated monthly plans and Borneo price, preserving TFM', () => {
-  const expected = { 'Unlock Tool': { '12 horas': 1000, '1 mês': 3000, '3 meses': 6000, '6 meses': 9000, 'Créditos': 500, 'Curso': 4500 }, 'Borneo Schematics': { '3 dias': 3000, '1 mês': 5000, 'Créditos': 500 }, 'TSM Tool': { '12 horas': 2000, '1 mês': 4000, '3 meses': 6000, 'Créditos': 500 }, 'AMT Tool': { '12 horas': 2000, '1 mês': 4000, 'Créditos': 500 }, 'TFM Tool': { '12 horas': 2000, '1 mês': 4000, 'Créditos': 500 } };
+  const expected = { 'Unlock Tool': { '24 horas': 1000, '1 mês': 3000, '3 meses': 6000, '6 meses': 9000, 'Créditos': 500, 'Curso': 4500 }, 'Borneo Schematics': { '3 dias': 3000, '1 mês': 5000, 'Créditos': 500 }, 'TSM Tool': { '12 horas': 2000, '1 mês': 4000, '3 meses': 6000, 'Créditos': 500 }, 'AMT Tool': { '12 horas': 2000, '1 mês': 4000, 'Créditos': 500 }, 'TFM Tool': { '12 horas': 2000, '1 mês': 4000, 'Créditos': 500 } };
   for (const [tool, plans] of Object.entries(expected)) {
     assert.deepEqual(Object.fromEntries(Object.entries(TOOLS[tool].plans).map(([plan, value]) => [plan, value.priceCents])), plans);
     assert.deepEqual(planChoices(tool).map(choice => choice.value), Object.keys(plans));
@@ -17,7 +17,10 @@ test('catalog has the updated monthly plans and Borneo price, preserving TFM', (
   for (const tool of Object.keys(expected)) assert.equal(getPlan(tool, '1 mês').months, 1);
   assert.match(planChoices('TSM Tool', '1 mês')[0].name, /1 mês.*40,00/);
   assert.throws(() => getPlan('__proto__', '12 horas'));
-  assert.deepEqual(planChoices('Unlock Tool', '12h').map(choice => choice.value), ['12 horas']);
+  assert.deepEqual(planChoices('Unlock Tool', '24h').map(choice => choice.value), ['24 horas']);
+  // 12 horas saiu do catálogo (16/11/2026), mas segue válido para as vendas antigas.
+  assert.deepEqual(planChoices('Unlock Tool', '12h').map(choice => choice.value), []);
+  assert.equal(getPlan('Unlock Tool', '12 horas').priceCents, 1000);
   assert.deepEqual(planChoices('Borneo Schematics', '3 dias').map(choice => choice.value), ['3 dias']);
   assert.deepEqual(planChoices('Borneo Schematics', '1 mês').map(choice => choice.value), ['1 mês']);
 });

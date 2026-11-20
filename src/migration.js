@@ -2,6 +2,7 @@
 
 const { ChannelType } = require('discord.js');
 const { fetchAllMessages, CHANNEL_NAMES } = require('./transport');
+const { LEGACY_PLANS: LEGACY_CATALOG_PLANS } = require('./catalog');
 
 const TYPES = { VEN: 'vendas', VENC: 'vencimentos', REN: 'renovacoes', TRC: 'trocas' };
 const LEGACY_PLANS = new Set(['12 horas', '3 dias', '1 mês', '3 meses', '12 meses']);
@@ -47,7 +48,8 @@ function parseLegacyRecord(message, catalog, now = new Date()) {
   const registeredAt = parseLegacyDate(fields['REGISTRADO EM'], message.createdTimestamp || message.createdAt);
   if (!registeredAt) throw new Error(`Data inválida no registro ${id}.`);
   const plan = (fields['NOVO PLANO'] || fields.PLANO)?.trim();
-  const spec = catalog[tool].plans[plan];
+  // Planos que saíram do catálogo (ex.: Unlock Tool 12 horas) ainda valem para o histórico.
+  const spec = catalog[tool].plans[plan] ?? LEGACY_CATALOG_PLANS[tool]?.[plan];
   const expiresAt = parseLegacyDate(fields['NOVO VENCIMENTO'] || fields.VENCIMENTO);
   if (['vendas', 'renovacoes'].includes(type) && (!LEGACY_PLANS.has(plan) || !expiresAt)) throw new Error(`Plano ou vencimento inválido no registro ${id}.`);
   if (type === 'vencimentos' && !expiresAt) throw new Error(`Vencimento inválido no registro ${id}.`);

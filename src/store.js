@@ -702,6 +702,66 @@ class Store {
     });
   }
 
+  // Sincronia com o estoque do site: aplica várias alterações num único evento.
+  // Nunca mexe em conta presa a uma venda do Discord (ativa, aguardando troca de
+  // senha) nem com publicação pendente; essas ficam para a próxima rodada.
+  // syncLocked = ocupada porque o site está usando (vendida/reservada lá).
+  async syncAccounts(guildId, ops) {
+    this._guild(guildId);
+    return this._mutate((state) => {
+      const at = new Date().toISOString();
+      const results = [];
+      const busy = (account) => account.activeSaleId || account.needsPasswordReset || account.pendingDelivery || this._hasPending(state, account.id);
+      for (const op of ops) {
+        try {
+          if (op.op === 'add') {
+            if (!Object.hasOwn(TOOLS, op.tool)) throw new Error('Ferramenta inválida.');
+            const login = String(op.login || '').trim();
+            const exists = Object.values(state.accounts).some((a) => a.tool === op.tool && a.login.trim().toLowerCase() === login.toLowerCase());
+            if (exists) { results.push({ op: op.op, login, skipped: 'já existe' }); continue; }
+            const account = this._upsertAccount(state, { tool: op.tool, login, password: op.password, status: op.status === 'occupied' ? 'occupied' : 'available', registeredAt: at });
+            account.syncLocked = account.status === 'occupied';
+            this._publishAccount(state, account);
+            this._audit(state, 'account.synced', account.id, null, at, { op: 'add', status: account.status });
+            results.push({ op: op.op, id: account.id });
+          } else if (op.op === 'update') {
+            const account = state.accounts[op.accountId];
+            if (!account) { results.push({ op: op.op, id: op.accountId, skipped: 'não encontrada' }); continue; }
+            if (busy(account)) { results.push({ op: op.op, id: account.id, skipped: 'em uso no Discord' }); continue; }
+            let changed = false;
+            if (op.password != null && this._password(account) !== op.password) {
+              account.passwordEncrypted = encryptString(String(op.password), this.key, `account:${this.guildId}:${account.id}`);
+              changed = true;
+            }
+            if (op.status && (op.status !== account.status || !!account.syncLocked !== (op.status === 'occupied'))) {
+              if (!['available', 'occupied'].includes(op.status)) throw new Error('Status da conta inválido.');
+              account.status = op.status;
+              account.syncLocked = op.status === 'occupied';
+              changed = true;
+            }
+            if (!changed) { results.push({ op: op.op, id: account.id, skipped: 'sem mudança' }); continue; }
+            account.updatedAt = at;
+            this._publishAccount(state, account);
+            this._audit(state, 'account.synced', account.id, null, at, { op: 'update', status: account.status, password: op.password != null });
+            results.push({ op: op.op, id: account.id });
+          } else if (op.op === 'remove') {
+            const account = state.accounts[op.accountId];
+            if (!account) { results.push({ op: op.op, id: op.accountId, skipped: 'não encontrada' }); continue; }
+            if (busy(account)) { results.push({ op: op.op, id: account.id, skipped: 'em uso no Discord' }); continue; }
+            delete state.accounts[account.id];
+            this._cancelDeliveries(state, entry => entry.payload?.accountId === account.id);
+            this._queueMessageRemoval(state, account, { accountId: account.id, tool: account.tool });
+            this._audit(state, 'account.deleted', account.id, null, at, { tool: account.tool, reason: op.reason || 'sincronia com o site' });
+            results.push({ op: op.op, id: account.id });
+          } else throw new Error('Operação de sincronia inválida.');
+        } catch (error) {
+          results.push({ op: op.op, id: op.accountId || null, login: op.login || null, error: error.message });
+        }
+      }
+      return results;
+    });
+  }
+
   async createSale(guildId, data) {
     this._guild(guildId);
     return this._mutate((state) => {

@@ -297,9 +297,9 @@ test('vendedor opera apenas no painel e a resposta é efêmera', async () => {
 
 test('autocomplete mostra preço apenas dos planos da ferramenta e bloqueia acesso sem cargo', async () => {
   const { app } = harness();
-  const unlock = interaction('vender', { ferramenta: 'Unlock Tool' }, { autocomplete: true, focusedValue: '12' });
+  const unlock = interaction('vender', { ferramenta: 'Unlock Tool' }, { autocomplete: true, focusedValue: '24' });
   await app.handle(unlock);
-  assert.deepEqual(unlock.choices.map(choice => choice.value), ['12 horas']);
+  assert.deepEqual(unlock.choices.map(choice => choice.value), ['24 horas']);
   assert.match(unlock.choices[0].name, /10,00/);
 
   const borneo = interaction('vender', { ferramenta: 'Borneo Schematics' }, { autocomplete: true });

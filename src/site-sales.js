@@ -3,6 +3,17 @@
 const catalog = require('./catalog');
 const { TOOL_ID_TO_NAME } = require('./catalog-sync');
 
+// Telefone no formato das vendas manuais: "+55 21 98480-7044". Sem telefone válido, null.
+function formatPhone(raw) {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (d.length === 10 || d.length === 11) d = '55' + d;
+  if (!/^55\d{10,11}$/.test(d)) return d.length >= 8 ? '+' + d : null;
+  const ddd = d.slice(2, 4), n = d.slice(4);
+  return `+55 ${ddd} ${n.slice(0, n.length - 4)}-${n.slice(-4)}`;
+}
+// Cliente registrado no Discord: o telefone (pedido do Weverton, 14/11/2026); sem telefone, nome ou e-mail.
+const clientOf = (order) => String(formatPhone(order.phone) || order.buyer_name || order.buyer_email || 'Cliente do site').replace(/\s+/g, ' ').trim().slice(0, 100);
+
 // Delivered site orders become /vender sales in Discord. An order is marked only
 // after the Discord event is written; createSiteSale recognises a repeated order.
 class SiteSales {
@@ -38,7 +49,7 @@ class SiteSales {
         continue;
       }
       try {
-        const client = String(order.buyer_name || order.phone || order.buyer_email || 'Cliente do site').replace(/\s+/g, ' ').trim().slice(0, 500);
+        const client = clientOf(order);
         const sale = await this.store.createSiteSale(this.guildId, {
           siteOrder: order.order_code, source: order.origin === 'whatsapp' ? 'whatsapp' : 'site',
           client, tool: target.tool, plan: target.plan, priceCents: order.amount_cents,
@@ -55,4 +66,25 @@ class SiteSales {
   }
 }
 
-module.exports = { SiteSales };
+// Uma vez só: vendas do site já registradas com o nome passam a mostrar o telefone.
+SiteSales.prototype.fixClients = async function fixClients() {
+  if (!this.pool || await this.store.getConfig(this.guildId, 'siteSaleClientsPhone', false)) return 0;
+  const sales = (await this.store.listRecords(this.guildId, 'vendas')).filter((s) => s.siteOrder);
+  const { rows } = await this.pool.query('SELECT order_code, phone FROM orders WHERE order_code = ANY($1::text[])', [sales.map((s) => s.siteOrder)]);
+  const byCode = new Map(rows.map((r) => [r.order_code, r]));
+  let changed = 0;
+  for (const sale of sales) {
+    const client = formatPhone(byCode.get(sale.siteOrder)?.phone);
+    if (!client || client === sale.client) continue;
+    try {
+      const edited = await this.store.editSale(this.guildId, { saleId: sale.id, changes: { client }, actorId: 'site-sales', editedAt: new Date().toISOString() });
+      await this.siteSync?.syncSale(edited);
+      changed++;
+    } catch (error) { this.logger.error(`[site-sales] telefone em ${sale.id}: ${error.message}`); }
+  }
+  await this.store.setConfig(this.guildId, 'siteSaleClientsPhone', true);
+  this.logger.log(`[site-sales] ${changed} venda(s) do site agora mostram o telefone do cliente.`);
+  return changed;
+};
+
+module.exports = { SiteSales, formatPhone };

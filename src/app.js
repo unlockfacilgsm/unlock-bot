@@ -2,6 +2,7 @@
 
 const { PermissionFlagsBits, MessageFlags, escapeMarkdown } = require('discord.js');
 const catalog = require('./catalog');
+const { isAmt12h } = require('./expiry-rotation');
 const { formatBR, buildRegisteredAt, parseDateOnlyBR, parseDateTimeBR } = require('./dates');
 const validation = require('./validation');
 const { dashboardText, monthlySalesText, exportCsv } = require('./reporting');
@@ -30,8 +31,8 @@ function hasRole(member, id) {
 }
 
 class BotApp {
-  constructor({ client, store, transport, migrate, guildId, clock = () => new Date(), adminRoleId, sellerRoleId, logger = console, siteSync = null, siteSales = null }) {
-    Object.assign(this, { client, store, transport, migrate, guildId, clock, adminRoleId, sellerRoleId, logger, siteSync, siteSales });
+  constructor({ client, store, transport, migrate, guildId, clock = () => new Date(), adminRoleId, sellerRoleId, logger = console, siteSync = null, siteSales = null, accountSync = null, expiryRotation = null, dailySummary = null, swapSync = null }) {
+    Object.assign(this, { client, store, transport, migrate, guildId, clock, adminRoleId, sellerRoleId, logger, siteSync, siteSales, accountSync, expiryRotation, dailySummary, swapSync });
     this.runningTick = null;
     this.stopping = false;
     this.requiresMigration = false;
@@ -170,6 +171,8 @@ class BotApp {
         if (amount !== null && (!Number.isFinite(amount) || Math.abs(Math.round(amount * 100) / 100 - amount) > 1e-8)) throw new Error('Informe o valor com no máximo duas casas decimais.');
         const description = str('descricao');
         const updated = await this.store.updateAdExpense(guildId, { id, ...(amount !== null ? { amountCents: Math.round(amount * 100) } : {}), ...(rawDate ? { date: parsedDate.toISOString().slice(0, 10) } : {}), ...(description !== null ? { description } : {}), actorId, updatedAt: registeredAt });
+        // A edição também vai para o site (antes só o registro ia — valor editado ficava velho no painel da VPS).
+        this.siteSync?.syncAdExpense(updated).catch(() => {});
         await this.refreshReports(interaction.guild);
         return this.publishChanges(interaction, `✅ Gasto **${safe(updated.id)}** atualizado: **${catalog.money(updated.amountCents)}** em ${updated.date.split('-').reverse().join('/')}.${updated.description ? `\nDescrição: ${safe(updated.description)}` : ''}`);
       }
@@ -298,10 +301,13 @@ class BotApp {
       if (accountId && (login != null || password != null)) throw new Error('Escolha a conta pelo ID ou informe login e senha manualmente.');
       if (!accountId && (!login || password == null)) throw new Error('Informe uma conta disponível ou preencha login e senha.');
       const values = validation.amounts(tool, plan, number('valor'), number('desconto'));
+      // Confere o estoque do site na hora: conta vendida lá fica ocupada aqui antes da venda.
+      await this.accountSync?.run().catch(error => this.logger.error(`[account-sync] ${error.message}`));
       const sale = await this.store.createSale(guildId, { client: validation.text(str('cliente'), 'Cliente'), tool, plan,
         ...(accountId ? { accountId: validation.id(accountId, 'ACC') } : { login: validation.text(login, 'Login'), password: validation.password(password) }),
         ...values, registeredAt: buildRegisteredAt(str('data'), str('hora'), now).toISOString(), actorId });
       this.siteSync?.syncSale(sale).catch(() => {});
+      this.accountSync?.run().catch(error => this.logger.error(`[account-sync] ${error.message}`));   // trava a conta no site já
       return this.publishChanges(interaction, `✅ Venda **${safe(sale.id)}** registrada.\nConta: ${safe(sale.accountId)}\nValor: **${catalog.money(sale.priceCents)}**\nVencimento: **${formatBR(sale.expiresAt)}**`);
     }
 
@@ -327,6 +333,7 @@ class BotApp {
       if (str('data') || str('hora')) changes.registeredAt = correctedDate(str('data'), str('hora'), sale.registeredAt);
       if (str('vencimento') || str('hora_vencimento')) changes.expiresAt = correctedDate(str('vencimento'), str('hora_vencimento'), sale.expiresAt);
       const edited = await this.store.editSale(guildId, { saleId, changes, actorId, editedAt: registeredAt });
+      await this.siteSync?.syncSale(edited).catch(() => {});   // painel do site com os dados corrigidos (cliente, valor, data)
       return this.publishChanges(interaction, `✅ Venda **${safe(edited.id)}** atualizada.${edited.expiresAt ? `\nVencimento: **${formatBR(edited.expiresAt)}**` : ''}`);
     }
 
@@ -387,7 +394,13 @@ class BotApp {
 
     if (command === 'vencidas') {
       await this.store.expireSales(guildId, registeredAt);
-      const expirations = (await this.store.listRecords(guildId, 'vencimentos')).filter(record => record.status === 'pending' && (!str('ferramenta') || record.tool === str('ferramenta')));
+      const expirations = [];
+      for (const record of await this.store.listRecords(guildId, 'vencimentos')) {
+        if (record.status !== 'pending' || (str('ferramenta') && record.tool !== str('ferramenta'))) continue;
+        // AMT 12 horas é por AnyDesk (o cliente não recebe a senha): volta ao estoque sozinha, sem troca.
+        if (record.tool === 'AMT Tool') { const sale = await this.store.getRecord(guildId, 'vendas', record.saleId); if (isAmt12h(record.tool, sale?.currentPlan || sale?.plan)) continue; }
+        expirations.push(record);
+      }
       if (!expirations.length) return showPages(interaction, '✅ Nenhum vencimento pendente de troca de senha.');
       const groups = new Map();
       for (const record of expirations) {
@@ -438,6 +451,7 @@ class BotApp {
       const type = str('tipo');
       const id = validation.id(str('id'), type === 'contas' ? 'ACC' : ({ vendas: 'VEN', vencimentos: 'VENC', renovacoes: 'REN', trocas: 'TRC' })[type]);
       const deleted = await this.store.deleteEntry(guildId, type, id, actorId);
+      if (type !== 'contas') await this.siteSync?.deleteRecord(deleted.id);   // some também do painel do site
       return this.publishChanges(interaction, `🗑️ Registro **${safe(deleted.id)}** (${safe(deleted.type)}) excluído.${deleted.relatedDeleted ? ` Também foram excluídos ${deleted.relatedDeleted} registro(s) vinculados à venda.` : ''}${deleted.saleId ? ` O vencimento pendente da venda ${safe(deleted.saleId)} foi encerrado.` : ''} A publicação no canal é removida e a ação foi registrada na auditoria.`);
     }
 
@@ -474,6 +488,8 @@ class BotApp {
     const panelRecords = await this.records('tudo');
     const panelAccounts = await this.store.listAccounts(this.guildId);
     const adExpenses = this.store.listAdExpenses ? await this.store.listAdExpenses(this.guildId) : [];
+    // O Discord é a fonte dos gastos com anúncios: o site é conferido e alinhado a cada atualização do painel.
+    this.siteSync?.reconcileAdExpenses?.(adExpenses).catch(() => {});
     const catalogLines = ['📚 **CATÁLOGO ATUAL — ALUGUEL DE ACESSO**', ...Object.entries(catalog.TOOLS).map(([name, item]) => `${item.emoji} **${name}**: ${Object.entries(item.plans).map(([plan, data]) => `${plan} — ${catalog.planPrice(data)}`).join(' | ')}${item.hwids ? ` (${item.hwids} HWIDs)` : ''}`), '', 'Use `/vender` para registrar uma venda (no plano Créditos, informe `creditos`); `/conta adicionar` para cadastrar contas; `/conta excluir` remove contas do estoque; `/buscar` e `/listar` para consultar registros; `/excluir` é restrito à administração.', 'Valores registrados são os informados no sistema; consulte compatibilidade da ferramenta antes de oferecer acesso.'];
     await this.transport.publishPanel?.(guild, `${dashboardText(panelRecords, panelAccounts, this.clock(), adExpenses)}\n\n${catalogLines.join('\n')}`);
     if (channels.anuncios) {
@@ -496,7 +512,13 @@ class BotApp {
       if (this.siteSync && expired.length) {
         for (const exp of expired) this.siteSync.syncExpiration(exp).catch(() => {});
       }
+      if (this.siteSales?.fixClients) await this.siteSales.fixClients().catch(error => this.logger.error(`[site-sales] ${error.message}`));
       if (this.siteSales) await this.siteSales.run().catch(error => this.logger.error(`[site-sales] ${error.message}`));
+      // Trocas de conta feitas pela Central (site) → venda do Discord — antes da sincronia de contas.
+      if (this.swapSync) await this.swapSync.run().catch(error => this.logger.error(`[troca] ${error.message}`));
+      // Vencidas: troca de senha automática (Unlock Tool) e AMT 12 h de volta ao estoque — antes da sincronia.
+      if (this.expiryRotation) await this.expiryRotation.run({ minIntervalMs: 55_000 }).catch(error => this.logger.error(`[auto-troca] ${error.message}`));
+      if (this.accountSync) await this.accountSync.run({ minIntervalMs: 55_000 }).catch(error => this.logger.error(`[account-sync] ${error.message}`));
       await this.transport.reminders(guild);
       await this.transport.flush(guild);
       if (!this.orphansPurged && this.transport.purgeOrphanAccounts) {
@@ -504,6 +526,7 @@ class BotApp {
         this.orphansPurged = true;
       }
       await this.refreshReports(guild);
+      if (this.dailySummary) await this.dailySummary.run(guild).catch(error => this.logger.error(`[resumo] ${error.message}`));
       const lastBackup = await this.store.getConfig(this.guildId, 'lastBackupAt', null);
       if (!lastBackup || this.clock().getTime() - Date.parse(lastBackup) >= 86_400_000) {
         await this.transport.backup(guild);
